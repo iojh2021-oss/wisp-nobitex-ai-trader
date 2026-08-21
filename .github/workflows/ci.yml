@@ -6,7 +6,7 @@ on:
   pull_request:
 
 jobs:
-  test:
+  python:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -20,3 +20,21 @@ jobs:
         run: python -m compileall -q src tests
       - name: Test
         run: pytest -q
+
+  wisp:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: wisp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.5'
+          cache: false
+      - name: Download modules
+        run: go mod download
+      - name: Format check
+        run: test -z "$(gofmt -l .)"
+      - name: Build
+        run: go build ./...
