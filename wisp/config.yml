@@ -1,0 +1,11 @@
+name: nobitex-ai-trader
+
+# No live exchange is enabled here. Nobitex credentials are supplied separately
+# after validation and must never be stored in this file.
+exchanges: []
+assets: {}
+parameters:
+  paper_trading: true
+  live_trading_enabled: false
+  market: BTCIRT
+  ai_model: gpt-5-mini
