@@ -77,9 +77,13 @@ class NobitexClient:
         response.raise_for_status()
         return response.json()
 
-    async def cancel_order(self, order_id: int) -> dict[str, Any]:
+    async def update_order_status(self, order_id: int, status: str = "canceled") -> dict[str, Any]:
+        if status != "canceled":
+            raise ValueError("Only cancellation is exposed by this safety-first adapter")
         response = await self._client.post(
-            f"{self.base_url}/market/orders/cancel", json={"id": order_id}, headers=self._headers
+            f"{self.base_url}/market/orders/update-status",
+            json={"order": order_id, "status": status},
+            headers=self._headers,
         )
         response.raise_for_status()
         return response.json()
