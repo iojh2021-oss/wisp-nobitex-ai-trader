@@ -40,8 +40,14 @@ jobs:
         run: go mod tidy
       - name: Verify modules
         run: go mod verify
-      - name: Format check
-        run: test -z "$(gofmt -l .)"
+      - name: Show formatting issues
+        run: |
+          files="$(gofmt -l .)"
+          if [ -n "$files" ]; then
+            echo "The following Go files are not gofmt-formatted:"
+            printf '%s\n' "$files"
+            exit 1
+          fi
       - name: Build
         run: go build ./...
       - name: Test
