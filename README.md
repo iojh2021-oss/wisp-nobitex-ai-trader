@@ -19,14 +19,37 @@ Nobitex market data → OpenAI decision → deterministic Risk Gate → Trade Pr
 
                          Android APK
                               ↓ HTTPS
-                    Wisp REST/Control API
+                    Cloud Wisp REST/Control API
 ```
 
-## Android app
+## Android app — no Termux required
 
-The repository now contains an Android Compose control panel under `android/`. It is intentionally a **control/monitoring client**, not the 24/7 trading engine. The Wisp backend remains the long-running runtime so Android background restrictions cannot stop strategy execution.
+The Android Compose app under `android/` is now **cloud-first**. The installed APK does not require Termux, a local Go process, or `127.0.0.1`.
 
-The app currently provides a mobile dashboard foundation for backend health and AI proposals. Live order execution is disabled. API credentials must remain server-side; never put a Nobitex token into the APK.
+The APK connects over HTTPS to the cloud Wisp control API. It can:
+
+- check backend health;
+- load AI trade proposals;
+- show market, amount, confidence, reason, and status;
+- approve or deny pending proposals;
+- keep the backend access token encrypted with Android Keystore;
+- remain paper-only while live financial execution is disabled.
+
+OpenAI API credentials and Nobitex credentials stay on the backend. OpenAI explicitly recommends never deploying an API key in a mobile app and routing requests through your own backend. citeturn0search0
+
+### Deploy the cloud backend once
+
+A Render Blueprint is included in `render.yaml` and the service is named `wisp-nobitex-ai-trader-api`.
+
+The deployment needs these secrets in the hosting dashboard:
+
+- `OPENAI_API_KEY` — required for AI decisions.
+- `APPROVAL_TOKEN` — private token used by the Android app to access proposals/approval.
+- `NOBITEX_API_TOKEN` — optional; only needed for the isolated read-only balance endpoint.
+
+Non-secret defaults such as `OPENAI_MODEL`, `NOBITEX_BASE_URL`, `PAPER_TRADING`, and `LIVE_TRADING_ENABLED` are already defined in `render.yaml`.
+
+The backend listens on the hosting platform's `PORT` and exposes `/healthz`, `/proposals`, `/approve`, `/deny`, `/executions`, and `/nobitex/readonly`.
 
 ### Build APK
 
@@ -41,24 +64,15 @@ cd android
 gradle assembleDebug
 ```
 
-## Mobile web dashboard
+## Cloud deployment files
 
-The Wisp process also serves a responsive mobile web dashboard on `APPROVAL_BIND_ADDR` (default `127.0.0.1:8787`). On the same Android device running Termux, open:
-
-```text
-http://127.0.0.1:8787/
-```
+- `Dockerfile` — reproducible Linux container for the Wisp backend.
+- `render.yaml` — Render web-service configuration.
+- `.github/workflows/ci.yml` — also validates the container build.
 
 ## Read-only Nobitex check
 
-Configure the token only in the backend runtime environment:
-
-```bash
-export NOBITEX_API_TOKEN='YOUR_TOKEN'
-export NOBITEX_BASE_URL='https://api.nobitex.ir'
-```
-
-The read-only route is isolated from the Paper Executor and does not create/cancel orders or withdraw funds.
+Configure the token only in the backend runtime environment. The read-only route is isolated from the Paper Executor and does not create/cancel orders or withdraw funds.
 
 ## Repository layout
 
@@ -70,6 +84,8 @@ The read-only route is isolated from the Paper Executor and does not create/canc
 - `src/trader/runtime.py` — risk-gated orchestration.
 - `wisp/` — Wisp Go runtime, approval gate, dashboard and paper executor.
 - `android/` — Android Compose control/monitoring app.
+- `Dockerfile` — cloud backend container.
+- `render.yaml` — cloud deployment definition.
 
 ## Security gates
 
@@ -78,6 +94,7 @@ The read-only route is isolated from the Paper Executor and does not create/canc
 3. Risk limits are enforced outside the LLM.
 4. Read-only Nobitex checks are isolated from execution.
 5. Secrets belong in deployment environment variables, never Git or the APK.
+6. Android-to-backend traffic is HTTPS-only in the cloud-first app.
 
 ## Important
 
