@@ -38,7 +38,16 @@ func newApprovalGate(ttl time.Duration) *approvalGate {
 	if ttl <= 0 {
 		ttl = 2 * time.Minute
 	}
-	return &approvalGate{pending: make(map[string]TradeProposal), ttl: ttl, executions: make(map[string]PaperExecution)}
+	// Approval is backed by the deterministic paper executor by default. This
+	// keeps the approval lifecycle usable in tests and in the local dashboard
+	// while guaranteeing that approval never reaches a real exchange.
+	executor := newPaperExecutor()
+	return &approvalGate{
+		pending:    make(map[string]TradeProposal),
+		ttl:        ttl,
+		executor:   executor,
+		executions: make(map[string]PaperExecution),
+	}
 }
 
 func newProposalID() (string, error) {
