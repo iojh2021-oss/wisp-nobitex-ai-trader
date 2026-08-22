@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
@@ -32,20 +31,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
-import okhttp3.Request
-import org.json.JSONArray
-
-private const val DEFAULT_BACKEND = "https://wisp-nobitex-ai-trader-api.onrender.com"
-
-data class ProposalUi(
-    val id: String,
-    val market: String,
-    val action: String,
-    val amount: String,
-    val confidence: String,
-    val reason: String,
-    val status: String,
-)
+import java.util.Locale
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -58,97 +44,85 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun TraderApp() {
     val context = androidx.compose.ui.platform.LocalContext.current
-    val tokenStore = remember { SecureTokenStore(context.applicationContext) }
-    var backend by remember { mutableStateOf(DEFAULT_BACKEND) }
-    var token by remember { mutableStateOf(tokenStore.read()) }
-    var status by remember { mutableStateOf("Not connected") }
-    var proposals by remember { mutableStateOf(emptyList<ProposalUi>()) }
-    var busy by remember { mutableStateOf(false) }
+    val secrets = remember { SecureTokenStore(context.applicationContext) }
+    val engine = remember { LocalTradingEngine(OkHttpClient()) }
     val scope = rememberCoroutineScope()
-    val client = remember { OkHttpClient() }
 
-    fun baseUrl(): String = backend.trim().trimEnd('/')
+    var market by remember { mutableStateOf("BTCIRT") }
+    var openAiKey by remember { mutableStateOf(secrets.readOpenAiKey()) }
+    var nobitexToken by remember { mutableStateOf(secrets.readNobitexToken()) }
+    var snapshot by remember { mutableStateOf<LocalTradingEngine.MarketSnapshot?>(null) }
+    var proposal by remember { mutableStateOf<LocalTradingEngine.Proposal?>(null) }
+    var executions by remember { mutableStateOf(emptyList<LocalTradingEngine.PaperExecution>()) }
+    var status by remember { mutableStateOf("Ready — no Termux or local backend required") }
+    var busy by remember { mutableStateOf(false) }
 
-    fun requestBuilder(url: String): Request.Builder {
-        val builder = Request.Builder().url(url)
-        if (token.isNotBlank()) builder.header("Authorization", "Bearer ${token.trim()}")
-        return builder
+    fun saveSecrets() {
+        secrets.saveOpenAiKey(openAiKey)
+        secrets.saveNobitexToken(nobitexToken)
     }
 
-    fun checkBackend() {
-        val base = baseUrl()
-        if (!base.startsWith("https://")) {
-            status = "Error: use an HTTPS cloud backend"
-            return
-        }
+    fun loadMarket() {
         busy = true
-        scope.launch {
-            status = withContext(Dispatchers.IO) {
-                runCatching {
-                    client.newCall(requestBuilder("$base/healthz").get().build()).execute().use { response ->
-                        if (response.isSuccessful) "Connected • HTTP ${response.code}"
-                        else "Backend returned HTTP ${response.code}"
-                    }
-                }.getOrElse { error -> "Error: ${error.message ?: error.javaClass.simpleName}" }
-            }
-            busy = false
-        }
-    }
-
-    fun refreshProposals() {
-        val base = baseUrl()
-        if (!base.startsWith("https://")) {
-            status = "Error: use an HTTPS cloud backend"
-            return
-        }
-        busy = true
+        saveSecrets()
         scope.launch {
             val result = withContext(Dispatchers.IO) {
-                runCatching {
-                    client.newCall(requestBuilder("$base/proposals").get().build()).execute().use { response ->
-                        val body = response.body?.string().orEmpty()
-                        if (!response.isSuccessful) error("HTTP ${response.code}: $body")
-                        val array = JSONArray(body)
-                        buildList {
-                            for (i in 0 until array.length()) {
-                                val p = array.getJSONObject(i)
-                                add(
-                                    ProposalUi(
-                                        id = p.optString("id"),
-                                        market = p.optString("market", "—"),
-                                        action = p.optString("action", "hold").uppercase(),
-                                        amount = "%.2f".format(p.optDouble("quote_amount", 0.0)),
-                                        confidence = "%.0f%%".format(p.optDouble("confidence", 0.0) * 100),
-                                        reason = p.optString("reason", "No reason provided"),
-                                        status = p.optString("status", "unknown"),
-                                    )
-                                )
-                            }
-                        }
-                    }
-                }
+                runCatching { engine.fetchMarket(market, nobitexToken) }
             }
-            result.onSuccess { proposals = it; status = "Proposals refreshed • ${it.size} item(s)" }
-                .onFailure { status = "Proposals error: ${it.message ?: it.javaClass.simpleName}" }
+            result.onSuccess {
+                snapshot = it
+                status = "Nobitex connected • ${it.market} • read-only market data"
+            }.onFailure {
+                status = "Market data error: ${it.message ?: it.javaClass.simpleName}"
+            }
             busy = false
         }
     }
 
-    fun decide(proposal: ProposalUi, approve: Boolean) {
+    fun analyzeWithChatGpt() {
+        val current = snapshot
+        if (current == null) {
+            status = "Fetch market data first"
+            return
+        }
+        if (openAiKey.isBlank()) {
+            status = "Add an OpenAI API key first"
+            return
+        }
+        busy = true
+        saveSecrets()
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching { engine.analyze(current, openAiKey) }
+            }
+            result.onSuccess {
+                proposal = it
+                status = when (it.status) {
+                    "pending" -> "ChatGPT proposal ready • waiting for your approval"
+                    else -> "Risk Gate blocked this proposal"
+                }
+            }.onFailure {
+                status = "AI analysis error: ${it.message ?: it.javaClass.simpleName}"
+            }
+            busy = false
+        }
+    }
+
+    fun approve() {
+        val current = proposal ?: return
         busy = true
         scope.launch {
-            val path = if (approve) "approve" else "deny"
-            status = withContext(Dispatchers.IO) {
-                runCatching {
-                    val url = "${baseUrl()}/$path?id=${java.net.URLEncoder.encode(proposal.id, "UTF-8")}"
-                    client.newCall(requestBuilder(url).post(okhttp3.RequestBody.create(null, ByteArray(0))).build()).execute().use { response ->
-                        val body = response.body?.string().orEmpty()
-                        if (!response.isSuccessful) error("HTTP ${response.code}: $body")
-                        "${if (approve) "Approved" else "Denied"} • ${proposal.market}"
-                    }
-                }.getOrElse { "Action error: ${it.message ?: it.javaClass.simpleName}" }
+            val result = withContext(Dispatchers.Default) {
+                runCatching { engine.approvePaper(current) }
             }
-            refreshProposals()
+            result.onSuccess {
+                executions = executions + it
+                proposal = current.copy(status = "approved_paper")
+                status = "Paper execution completed • no real order was sent"
+            }.onFailure {
+                status = "Approval blocked: ${it.message ?: it.javaClass.simpleName}"
+            }
+            busy = false
         }
     }
 
@@ -158,34 +132,109 @@ private fun TraderApp() {
                 modifier = Modifier.fillMaxSize().padding(pad).padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                item { Text("AI Trading Control", style = MaterialTheme.typography.headlineSmall) }
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("AI Trading Control", style = MaterialTheme.typography.headlineSmall)
+                        Text("Standalone Android app", style = MaterialTheme.typography.labelLarge)
+                        Text(
+                            "The APK connects directly to Nobitex market data and OpenAI. Termux and a local backend are not required.",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                }
                 item {
                     Card(Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Text("Cloud connection", style = MaterialTheme.typography.titleMedium)
+                            Text("1. Connections", style = MaterialTheme.typography.titleLarge)
                             OutlinedTextField(
-                                value = backend,
-                                onValueChange = { backend = it },
+                                value = market,
+                                onValueChange = { market = it.uppercase(Locale.US).filter { c -> c.isLetterOrDigit() } },
                                 modifier = Modifier.fillMaxWidth(),
                                 singleLine = true,
-                                label = { Text("Backend HTTPS URL") },
-                                supportingText = { Text("No Termux is required. Use the cloud backend created from render.yaml.") }
+                                label = { Text("Nobitex market") },
+                                supportingText = { Text("Example: BTCIRT or BTCUSDT") }
                             )
                             OutlinedTextField(
-                                value = token,
-                                onValueChange = { token = it },
+                                value = nobitexToken,
+                                onValueChange = { nobitexToken = it },
                                 modifier = Modifier.fillMaxWidth(),
                                 singleLine = true,
                                 visualTransformation = PasswordVisualTransformation(),
-                                label = { Text("Backend access token") },
-                                supportingText = { Text("Stored encrypted with Android Keystore on this device.") }
+                                label = { Text("Nobitex API token (optional for public market data)") },
+                                supportingText = { Text("Stored encrypted with Android Keystore. No order endpoint is called.") }
                             )
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Button(enabled = !busy, onClick = { tokenStore.save(token); checkBackend() }, modifier = Modifier.weight(1f)) {
-                                    Text(if (busy) "Checking…" else "Connect")
+                            OutlinedTextField(
+                                value = openAiKey,
+                                onValueChange = { openAiKey = it },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true,
+                                visualTransformation = PasswordVisualTransformation(),
+                                label = { Text("OpenAI API key") },
+                                supportingText = { Text("Used only for ChatGPT analysis and stored encrypted on this phone.") }
+                            )
+                            Button(enabled = !busy, onClick = { loadMarket() }, modifier = Modifier.fillMaxWidth()) {
+                                Text(if (busy) "Working…" else "Connect to Nobitex")
+                            }
+                        }
+                    }
+                }
+                item {
+                    Card(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Connection", style = MaterialTheme.typography.titleMedium)
+                            Text(status)
+                        }
+                    }
+                }
+                snapshot?.let { data ->
+                    item {
+                        Card(Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("2. Live market data", style = MaterialTheme.typography.titleLarge)
+                                Text("${data.market} • read only")
+                                Text("Last: ${data.lastPrice}")
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    Text("Bid: ${data.bid}", Modifier.weight(1f))
+                                    Text("Ask: ${data.ask}", Modifier.weight(1f))
                                 }
-                                OutlinedButton(onClick = { token = ""; tokenStore.clear() }, modifier = Modifier.weight(1f)) {
-                                    Text("Clear token")
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    Text("High: ${data.high}", Modifier.weight(1f))
+                                    Text("Low: ${data.low}", Modifier.weight(1f))
+                                }
+                                Text("Volume: ${data.volume}")
+                                OutlinedButton(enabled = !busy, onClick = { loadMarket() }, modifier = Modifier.fillMaxWidth()) {
+                                    Text("Refresh market")
+                                }
+                            }
+                        }
+                    }
+                    item {
+                        Card(Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("3. ChatGPT analysis", style = MaterialTheme.typography.titleLarge)
+                                Text("AI sees the current market snapshot and creates a proposal. It does not send an order.")
+                                Button(enabled = !busy, onClick = { analyzeWithChatGpt() }, modifier = Modifier.fillMaxWidth()) {
+                                    Text(if (busy) "Analyzing…" else "Analyze with ChatGPT")
+                                }
+                            }
+                        }
+                    }
+                }
+                proposal?.let { p ->
+                    item {
+                        Card(Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("4. AI Proposal", style = MaterialTheme.typography.titleLarge)
+                                Text("${p.action.uppercase(Locale.US)} • ${p.market}")
+                                Text("Confidence: ${(p.confidence * 100).toInt()}%")
+                                Text("Paper amount: ${"%.2f".format(Locale.US, p.quoteAmount)}")
+                                Text("Risk status: ${p.status}")
+                                Text(p.reason)
+                                if (p.status == "pending") {
+                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Button(enabled = !busy, onClick = { approve() }, modifier = Modifier.weight(1f)) { Text("Approve paper") }
+                                        OutlinedButton(enabled = !busy, onClick = { proposal = p.copy(status = "denied") }, modifier = Modifier.weight(1f)) { Text("Reject") }
+                                    }
                                 }
                             }
                         }
@@ -193,35 +242,13 @@ private fun TraderApp() {
                 }
                 item {
                     Card(Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(16.dp)) {
-                            Text("Connection", style = MaterialTheme.typography.titleMedium)
-                            Text(status)
-                        }
-                    }
-                }
-                item {
-                    OutlinedButton(enabled = !busy, onClick = { refreshProposals() }, modifier = Modifier.fillMaxWidth()) {
-                        Text("Refresh AI proposals")
-                    }
-                }
-                if (proposals.isEmpty()) {
-                    item {
-                        Card(Modifier.fillMaxWidth()) {
-                            Text("No proposals yet. The cloud Wisp runtime creates proposals only when AI confidence and deterministic risk limits pass.", Modifier.padding(16.dp))
-                        }
-                    }
-                }
-                items(proposals, key = { it.id }) { proposal ->
-                    Card(Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text("${proposal.action} • ${proposal.market}", style = MaterialTheme.typography.titleLarge)
-                            Text("Amount: ${proposal.amount} • Confidence: ${proposal.confidence}")
-                            Text("Status: ${proposal.status}")
-                            Text(proposal.reason, style = MaterialTheme.typography.bodyMedium)
-                            if (proposal.status == "pending") {
-                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Button(enabled = !busy, onClick = { decide(proposal, true) }, modifier = Modifier.weight(1f)) { Text("Approve") }
-                                    OutlinedButton(enabled = !busy, onClick = { decide(proposal, false) }, modifier = Modifier.weight(1f)) { Text("Deny") }
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Paper executions", style = MaterialTheme.typography.titleLarge)
+                            if (executions.isEmpty()) {
+                                Text("No paper executions yet.")
+                            } else {
+                                executions.reversed().forEach { x ->
+                                    Text("${x.action.uppercase(Locale.US)} ${x.market} • ${"%.2f".format(Locale.US, x.quoteAmount)} • ${x.reference}")
                                 }
                             }
                         }
@@ -229,7 +256,7 @@ private fun TraderApp() {
                 }
                 item {
                     Text(
-                        "Safety: paper trading is enabled. Live financial execution remains disabled in this build.",
+                        "Safety: this APK is standalone and paper-only. Live Nobitex order execution is disabled. Your OpenAI/Nobitex keys never need Termux and are stored using Android Keystore.",
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
