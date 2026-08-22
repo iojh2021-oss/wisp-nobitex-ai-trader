@@ -15,25 +15,25 @@ import (
 // TradeProposal is an advisory decision waiting for explicit human approval.
 // Approval never bypasses deterministic risk validation.
 type TradeProposal struct {
-	ID           string    `json:"id"`
-	CreatedAt    time.Time `json:"created_at"`
-	ExpiresAt    time.Time `json:"expires_at"`
-	Market       string    `json:"market"`
-	Action       string    `json:"action"`
-	QuoteAmount  float64   `json:"quote_amount"`
-	Confidence   float64   `json:"confidence"`
-	Reason       string    `json:"reason"`
-	Status       string    `json:"status"`
+	ID          string    `json:"id"`
+	CreatedAt   time.Time `json:"created_at"`
+	ExpiresAt   time.Time `json:"expires_at"`
+	Market      string    `json:"market"`
+	Action      string    `json:"action"`
+	QuoteAmount float64   `json:"quote_amount"`
+	Confidence  float64   `json:"confidence"`
+	Reason      string    `json:"reason"`
+	Status      string    `json:"status"`
 }
 
 type approvalGate struct {
-	mu       sync.Mutex
-	pending  map[string]TradeProposal
-	ttl      time.Duration
+	mu      sync.Mutex
+	pending map[string]TradeProposal
+	ttl     time.Duration
 }
 
 func newApprovalGate(ttl time.Duration) *approvalGate {
-	if ttl < time.Second {
+	if ttl <= 0 {
 		ttl = 2 * time.Minute
 	}
 	return &approvalGate{pending: make(map[string]TradeProposal), ttl: ttl}
@@ -71,7 +71,7 @@ func (g *approvalGate) approve(id string) (TradeProposal, error) {
 	if !ok {
 		return TradeProposal{}, fmt.Errorf("proposal not found")
 	}
-	if time.Now().UTC().After(p.ExpiresAt) {
+	if !time.Now().UTC().Before(p.ExpiresAt) {
 		p.Status = "expired"
 		g.pending[id] = p
 		return p, fmt.Errorf("proposal expired")
@@ -105,7 +105,7 @@ func (g *approvalGate) list() []TradeProposal {
 	now := time.Now().UTC()
 	out := make([]TradeProposal, 0, len(g.pending))
 	for id, p := range g.pending {
-		if p.Status == "pending" && now.After(p.ExpiresAt) {
+		if p.Status == "pending" && !now.Before(p.ExpiresAt) {
 			p.Status = "expired"
 			g.pending[id] = p
 		}
@@ -137,13 +137,19 @@ func (g *approvalGate) serve() *http.Server {
 	mux.HandleFunc("/approve", auth(func(w http.ResponseWriter, r *http.Request) {
 		id := r.URL.Query().Get("id")
 		p, err := g.approve(id)
-		if err != nil { writeJSONStatus(w, http.StatusConflict, map[string]any{"error": err.Error(), "proposal": p}); return }
+		if err != nil {
+			writeJSONStatus(w, http.StatusConflict, map[string]any{"error": err.Error(), "proposal": p})
+			return
+		}
 		writeJSON(w, p)
 	}))
 	mux.HandleFunc("/deny", auth(func(w http.ResponseWriter, r *http.Request) {
 		id := r.URL.Query().Get("id")
 		p, err := g.deny(id)
-		if err != nil { writeJSONStatus(w, http.StatusConflict, map[string]any{"error": err.Error(), "proposal": p}); return }
+		if err != nil {
+			writeJSONStatus(w, http.StatusConflict, map[string]any{"error": err.Error(), "proposal": p})
+			return
+		}
 		writeJSON(w, p)
 	}))
 	return &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
