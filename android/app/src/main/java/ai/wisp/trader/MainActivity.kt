@@ -21,6 +21,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun TraderApp() {
     var backend by remember { mutableStateOf("http://10.0.2.2:8787") }
