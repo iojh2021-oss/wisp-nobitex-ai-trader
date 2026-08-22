@@ -1,0 +1,32 @@
+services:
+  - type: web
+    name: wisp-nobitex-ai-trader-api
+    runtime: docker
+    plan: free
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-5-mini
+      - key: APPROVAL_TOKEN
+        sync: false
+      - key: NOBITEX_API_TOKEN
+        sync: false
+      - key: NOBITEX_BASE_URL
+        value: https://api.nobitex.ir
+      - key: NOBITEX_MARKET
+        value: BTCIRT
+      - key: PAPER_TRADING
+        value: "true"
+      - key: LIVE_TRADING_ENABLED
+        value: "false"
+      - key: MIN_CONFIDENCE
+        value: "0.70"
+      - key: MAX_TRADE_QUOTE
+        value: "1000000"
+      - key: MAX_DAILY_LOSS_QUOTE
+        value: "2000000"
+      - key: TRADING_LOOP_INTERVAL
+        value: 30s
