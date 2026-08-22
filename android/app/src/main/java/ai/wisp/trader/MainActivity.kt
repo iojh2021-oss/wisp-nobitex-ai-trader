@@ -32,6 +32,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -45,7 +46,16 @@ class MainActivity : ComponentActivity() {
 private fun TraderApp() {
     val context = androidx.compose.ui.platform.LocalContext.current
     val secrets = remember { SecureTokenStore(context.applicationContext) }
-    val engine = remember { LocalTradingEngine(OkHttpClient()) }
+    val httpClient = remember {
+        OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
+            .callTimeout(45, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(true)
+            .build()
+    }
+    val engine = remember { LocalTradingEngine(httpClient) }
     val scope = rememberCoroutineScope()
 
     var market by remember { mutableStateOf("BTCIRT") }
@@ -54,7 +64,7 @@ private fun TraderApp() {
     var snapshot by remember { mutableStateOf<LocalTradingEngine.MarketSnapshot?>(null) }
     var proposal by remember { mutableStateOf<LocalTradingEngine.Proposal?>(null) }
     var executions by remember { mutableStateOf(emptyList<LocalTradingEngine.PaperExecution>()) }
-    var status by remember { mutableStateOf("Ready — no Termux or local backend required") }
+    var status by remember { mutableStateOf("Ready — standalone mode; Termux is not required") }
     var busy by remember { mutableStateOf(false) }
 
     fun saveSecrets() {
@@ -135,9 +145,9 @@ private fun TraderApp() {
                 item {
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text("AI Trading Control", style = MaterialTheme.typography.headlineSmall)
-                        Text("Standalone Android app", style = MaterialTheme.typography.labelLarge)
+                        Text("Standalone Android • v0.2.0", style = MaterialTheme.typography.labelLarge)
                         Text(
-                            "The APK connects directly to Nobitex market data and OpenAI. Termux and a local backend are not required.",
+                            "No Termux, localhost backend, or emulator address is required. The APK talks directly to Nobitex and OpenAI over HTTPS.",
                             style = MaterialTheme.typography.bodyMedium
                         )
                     }
@@ -161,7 +171,7 @@ private fun TraderApp() {
                                 singleLine = true,
                                 visualTransformation = PasswordVisualTransformation(),
                                 label = { Text("Nobitex API token (optional for public market data)") },
-                                supportingText = { Text("Stored encrypted with Android Keystore. No order endpoint is called.") }
+                                supportingText = { Text("Encrypted locally with Android Keystore. The Android flow never calls an order endpoint.") }
                             )
                             OutlinedTextField(
                                 value = openAiKey,
@@ -170,7 +180,7 @@ private fun TraderApp() {
                                 singleLine = true,
                                 visualTransformation = PasswordVisualTransformation(),
                                 label = { Text("OpenAI API key") },
-                                supportingText = { Text("Used only for ChatGPT analysis and stored encrypted on this phone.") }
+                                supportingText = { Text("Your API key is used only for ChatGPT analysis and is encrypted locally.") }
                             )
                             Button(enabled = !busy, onClick = { loadMarket() }, modifier = Modifier.fillMaxWidth()) {
                                 Text(if (busy) "Working…" else "Connect to Nobitex")
@@ -212,7 +222,7 @@ private fun TraderApp() {
                         Card(Modifier.fillMaxWidth()) {
                             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Text("3. ChatGPT analysis", style = MaterialTheme.typography.titleLarge)
-                                Text("AI sees the current market snapshot and creates a proposal. It does not send an order.")
+                                Text("ChatGPT receives only the current market snapshot and returns a structured proposal. It cannot send a Nobitex order.")
                                 Button(enabled = !busy, onClick = { analyzeWithChatGpt() }, modifier = Modifier.fillMaxWidth()) {
                                     Text(if (busy) "Analyzing…" else "Analyze with ChatGPT")
                                 }
@@ -256,7 +266,7 @@ private fun TraderApp() {
                 }
                 item {
                     Text(
-                        "Safety: this APK is standalone and paper-only. Live Nobitex order execution is disabled. Your OpenAI/Nobitex keys never need Termux and are stored using Android Keystore.",
+                        "Safety: standalone and paper-only. Live Nobitex order execution is disabled. Never embed a shared OpenAI or exchange secret in the APK; use your own credentials and rotate them if exposed.",
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
