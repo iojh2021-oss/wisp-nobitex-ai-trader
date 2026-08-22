@@ -5,6 +5,7 @@ import (
 	"flag"
 	"log"
 	"os"
+	"time"
 
 	"github.com/wisp-trading/sdk/pkg/types/runtime"
 	"github.com/wisp-trading/sdk/pkg/types/strategy"
@@ -20,17 +21,30 @@ func main() {
 	ctx := context.Background()
 	var rt runtime.Runtime
 	var strat strategy.Strategy
+	var gate *approvalGate
 
 	app := fx.New(
 		wisp.Module,
+		fx.Provide(func() *approvalGate {
+			return newApprovalGate(envDuration("APPROVAL_TTL", 2*time.Minute))
+		}),
 		fx.Provide(NewAITraderStrategy),
-		fx.Populate(&rt, &strat),
+		fx.Populate(&rt, &strat, &gate),
 		fx.NopLogger,
 	)
 	if err := app.Start(ctx); err != nil {
 		log.Fatalf("fx start: %v", err)
 	}
 	defer func() { _ = app.Stop(ctx) }()
+
+	approvalServer := gate.serve()
+	go func() {
+		log.Printf("approval API listening on %s", approvalServer.Addr)
+		if err := approvalServer.ListenAndServe(); err != nil && err.Error() != "http: Server closed" {
+			log.Printf("approval API: %v", err)
+		}
+	}()
+	defer func() { _ = approvalServer.Shutdown(context.Background()) }()
 
 	if err := rt.StartStandalone(strat, *configDir, *wispYml); err != nil {
 		log.Fatalf("StartStandalone: %v", err)
