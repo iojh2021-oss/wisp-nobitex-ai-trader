@@ -1,61 +1,57 @@
 # Wisp Nobitex AI Trader
 
-Safety-first trading-agent foundation using **Wisp** as the long-running Go strategy runtime, **OpenAI** as the decision engine, and a **Nobitex REST/WebSocket adapter**.
+Safety-first trading-agent foundation using **Wisp**, **OpenAI**, and a **Nobitex REST/WebSocket adapter**.
 
-> **Current mode: paper-safe by default.** No API secret is stored in this repository and the current Wisp runtime does not submit live exchange orders.
+> **Current mode: paper-safe by default.** Live financial order execution is disabled.
 
-## Architecture
+## Android app — standalone, no Termux
+
+The APK under `android/` is now **standalone**. It does not require Termux, a local Go process, `127.0.0.1`, or a cloud Wisp backend just to perform market-data and AI paper-analysis flows.
 
 ```text
-Nobitex market data → OpenAI decision → deterministic Risk Gate → Trade Proposal
-                                                            ↓
-                                                     Approval Dashboard
-                                                       ↙           ↘
-                                                    Reject       Approve
-                                                                    ↓
-                                                             Paper Executor
-                                                                    ↓
-                                                             Execution Result
-
-                         Android APK
-                              ↓ HTTPS
-                    Cloud Wisp REST/Control API
+Android APK
+   │
+   ├── Nobitex HTTPS (read-only market data)
+   │
+   ├── OpenAI Responses API (ChatGPT model)
+   │
+   ├── deterministic Risk Gate
+   │
+   ├── AI Trade Proposal
+   │
+   └── explicit approval → local Paper Executor
 ```
 
-## Android app — no Termux required
+The app can:
 
-The Android Compose app under `android/` is now **cloud-first**. The installed APK does not require Termux, a local Go process, or `127.0.0.1`.
+- read Nobitex market data directly over HTTPS;
+- ask an OpenAI GPT model to analyze the supplied market snapshot;
+- create a structured BUY / SELL / HOLD proposal;
+- reject weak proposals automatically through a deterministic confidence gate;
+- require explicit user approval before a paper execution;
+- keep the OpenAI API key and optional Nobitex API token encrypted with Android Keystore;
+- never call a Nobitex order endpoint in the Android paper-trading flow.
 
-The APK connects over HTTPS to the cloud Wisp control API. It can:
+### Credentials
 
-- check backend health;
-- load AI trade proposals;
-- show market, amount, confidence, reason, and status;
-- approve or deny pending proposals;
-- keep the backend access token encrypted with Android Keystore;
-- remain paper-only while live financial execution is disabled.
+The standalone APK intentionally asks the user for their own credentials rather than embedding shared secrets in the application:
 
-OpenAI API credentials and Nobitex credentials stay on the backend. OpenAI's current security guidance says API keys should not be deployed in mobile apps and requests should be routed through a backend you control.
+- **OpenAI API key** — used for AI analysis. An OpenAI API key is separate from a ChatGPT web subscription.
+- **Nobitex API token** — optional for public market-data requests; needed for private account data in future read-only features.
 
-### Deploy the cloud backend once
+Keys are stored locally using Android Keystore. They are not committed to GitHub and are not sent to the Wisp backend.
 
-A Render Blueprint is included in `render.yaml` and the service is named `wisp-nobitex-ai-trader-api`.
+## Cloud Wisp backend
 
-The deployment needs these secrets in the hosting dashboard:
+The Go/Wisp backend remains available as a separate server-side deployment for long-running strategy orchestration, monitoring, and the existing approval dashboard. `render.yaml` defines a Render deployment.
 
-- `OPENAI_API_KEY` — required for AI decisions.
-- `APPROVAL_TOKEN` — private token used by the Android app to access proposals/approval.
-- `NOBITEX_API_TOKEN` — optional; only needed for the isolated read-only balance endpoint.
+The cloud service is **not required by the standalone APK**.
 
-Non-secret defaults such as `OPENAI_MODEL`, `NOBITEX_BASE_URL`, `PAPER_TRADING`, and `LIVE_TRADING_ENABLED` are already defined in `render.yaml`.
-
-The backend listens on the hosting platform's `PORT` and exposes `/healthz`, `/proposals`, `/approve`, `/deny`, `/executions`, and `/nobitex/readonly`.
-
-### Build APK
+## Build APK
 
 GitHub Actions workflow: `.github/workflows/android.yml`.
 
-It builds a debug APK and uploads it as the `wisp-trader-debug-apk` workflow artifact. The workflow can also be started manually with **Run workflow**.
+It builds a debug APK and uploads it as the `wisp-trader-debug-apk` workflow artifact. It also supports **Run workflow** manually.
 
 For local builds:
 
@@ -64,38 +60,32 @@ cd android
 gradle assembleDebug
 ```
 
-## Cloud deployment files
+## Nobitex integration
 
-- `Dockerfile` — reproducible Linux container for the Wisp backend.
-- `render.yaml` — Render web-service configuration.
-- `.github/workflows/ci.yml` — also validates the container build.
+The Android market-data client uses the current Nobitex API v2 base URL (`https://apiv2.nobitex.ir`) and only reads market information in the standalone paper-trading flow.
 
-## Read-only Nobitex check
-
-Configure the token only in the backend runtime environment. The read-only route is isolated from the Paper Executor and does not create/cancel orders or withdraw funds.
+The repository also contains the server-side Nobitex adapter and an isolated read-only endpoint. Live order execution remains disabled.
 
 ## Repository layout
 
-- `src/trader/agent.py` — OpenAI decision engine.
-- `src/trader/risk.py` — deterministic limits.
-- `src/trader/paper.py` — isolated paper broker.
-- `src/trader/nobitex.py` — Nobitex adapter; token is runtime-only.
-- `src/trader/websocket.py` — reconnecting market stream.
-- `src/trader/runtime.py` — risk-gated orchestration.
-- `wisp/` — Wisp Go runtime, approval gate, dashboard and paper executor.
-- `android/` — Android Compose control/monitoring app.
-- `Dockerfile` — cloud backend container.
-- `render.yaml` — cloud deployment definition.
+- `android/` — standalone Android Compose app.
+- `android/.../LocalTradingEngine.kt` — direct Nobitex market-data, OpenAI analysis, risk gate, and paper execution logic.
+- `android/.../SecureTokenStore.kt` — Android Keystore-backed secret storage.
+- `src/trader/` — Python strategy/benchmark components.
+- `wisp/` — Go/Wisp runtime, approval gate, dashboard, and paper executor.
+- `Dockerfile` / `render.yaml` — optional cloud backend deployment.
+- `.github/workflows/android.yml` — APK build.
+- `.github/workflows/ci.yml` — repository CI.
 
 ## Security gates
 
 1. Paper trading is the default.
-2. Wisp refuses automatic live execution.
-3. Risk limits are enforced outside the LLM.
-4. Read-only Nobitex checks are isolated from execution.
-5. Secrets belong in deployment environment variables, never Git or the APK.
-6. Android-to-backend traffic is HTTPS-only in the cloud-first app.
+2. The standalone APK does not expose a live-order function.
+3. AI confidence is checked by deterministic application code; the model cannot override the risk limit.
+4. A BUY/SELL proposal requires explicit user approval before paper execution.
+5. Secrets are stored with Android Keystore and never committed to Git.
+6. Network calls use HTTPS.
 
 ## Important
 
-This software does not guarantee profitability. An LLM can make incorrect decisions. Real-money deployment requires additional security, operational monitoring, and explicit review.
+This software does not guarantee profitability. An LLM can make incorrect decisions. Real-money trading requires additional validation, monitoring, exchange-specific safeguards, and a carefully reviewed live-execution design.
