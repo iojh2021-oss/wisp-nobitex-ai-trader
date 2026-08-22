@@ -35,7 +35,7 @@ The APK connects over HTTPS to the cloud Wisp control API. It can:
 - keep the backend access token encrypted with Android Keystore;
 - remain paper-only while live financial execution is disabled.
 
-OpenAI API credentials and Nobitex credentials stay on the backend. OpenAI explicitly recommends never deploying an API key in a mobile app and routing requests through your own backend. citeturn0search0
+OpenAI API credentials and Nobitex credentials stay on the backend. OpenAI's current security guidance says API keys should not be deployed in mobile apps and requests should be routed through a backend you control.
 
 ### Deploy the cloud backend once
 
