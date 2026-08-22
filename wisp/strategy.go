@@ -31,35 +31,56 @@ func (s *AITraderStrategy) Start(ctx context.Context) error {
 
 func envBool(name string, fallback bool) bool {
 	v, ok := os.LookupEnv(name)
-	if !ok { return fallback }
-	return strings.EqualFold(strings.TrimSpace(v), "1") || strings.EqualFold(strings.TrimSpace(v), "true") || strings.EqualFold(strings.TrimSpace(v), "yes") || strings.EqualFold(strings.TrimSpace(v), "on")
+	if !ok {
+		return fallback
+	}
+	v = strings.TrimSpace(v)
+	return strings.EqualFold(v, "1") || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes") || strings.EqualFold(v, "on")
 }
 
 func envFloat(name string, fallback float64) float64 {
 	v, err := strconv.ParseFloat(os.Getenv(name), 64)
-	if err != nil || v <= 0 { return fallback }
+	if err != nil || v <= 0 {
+		return fallback
+	}
 	return v
 }
 
 func envDuration(name string, fallback time.Duration) time.Duration {
 	v := os.Getenv(name)
-	if v == "" { return fallback }
+	if v == "" {
+		return fallback
+	}
 	d, err := time.ParseDuration(v)
-	if err != nil || d < time.Second { return fallback }
+	if err != nil || d < time.Second {
+		return fallback
+	}
 	return d
 }
 
 func (s *AITraderStrategy) run(ctx context.Context) {
 	baseURL := strings.TrimRight(os.Getenv("NOBITEX_BASE_URL"), "/")
-	if baseURL == "" { baseURL = "https://api.nobitex.ir" }
+	if baseURL == "" {
+		baseURL = "https://api.nobitex.ir"
+	}
 	market := strings.ToUpper(os.Getenv("NOBITEX_MARKET"))
-	if market == "" { market = "BTCIRT" }
+	if market == "" {
+		market = "BTCIRT"
+	}
 	model := os.Getenv("OPENAI_MODEL")
-	if model == "" { model = "gpt-5-mini" }
+	if model == "" {
+		model = "gpt-5-mini"
+	}
 	paper := envBool("PAPER_TRADING", true)
 	live := envBool("LIVE_TRADING_ENABLED", false)
-	if live && paper { s.k.Log().Error("live trading blocked: PAPER_TRADING=true") ; return }
-	if live && os.Getenv("NOBITEX_TOKEN") == "" { s.k.Log().Error("live trading blocked: NOBITEX_TOKEN is missing") ; return }
+	if live && paper {
+		s.k.Log().Info("live trading blocked: PAPER_TRADING=true")
+		return
+	}
+	if live && os.Getenv("NOBITEX_TOKEN") == "" {
+		s.k.Log().Info("live trading blocked: NOBITEX_TOKEN is missing")
+		return
+	}
 
 	src, dst := splitMarket(market)
 	nobitex := newNobitexClient(baseURL, os.Getenv("NOBITEX_TOKEN"))
@@ -68,10 +89,10 @@ func (s *AITraderStrategy) run(ctx context.Context) {
 	interval := envDuration("TRADING_LOOP_INTERVAL", 30*time.Second)
 	minConfidence := envFloat("MIN_CONFIDENCE", 0.70)
 
-	s.k.Log().Info(fmt.Sprintf("nobitex-ai-trader: Wisp runtime started market=%s paper=%t live=%t", market, paper, live))
+	s.k.Log().Info("nobitex-ai-trader: Wisp runtime started market=%s paper=%t live=%t", market, paper, live)
 	for {
 		if err := s.tick(ctx, nobitex, ai, risk, src, dst, market, paper, live, minConfidence); err != nil {
-			s.k.Log().Error(fmt.Sprintf("trading cycle failed: %v", err))
+			s.k.Log().Failed("nobitex-ai-trader", market, "trading cycle failed", "error", err.Error())
 		}
 		timer := time.NewTimer(interval)
 		select {
@@ -87,39 +108,59 @@ func (s *AITraderStrategy) run(ctx context.Context) {
 func splitMarket(market string) (string, string) {
 	m := strings.ToLower(market)
 	for _, quote := range []string{"irt", "usdt", "usdc"} {
-		if strings.HasSuffix(m, quote) && len(m) > len(quote) { return m[:len(m)-len(quote)], quote }
+		if strings.HasSuffix(m, quote) && len(m) > len(quote) {
+			return m[:len(m)-len(quote)], quote
+		}
 	}
 	return m, "irt"
 }
 
 func (s *AITraderStrategy) tick(ctx context.Context, n *nobitexClient, ai *openAIClient, risk *riskGate, src, dst, market string, paper, live bool, minConfidence float64) error {
 	stats, err := n.marketStats(ctx, src, dst)
-	if err != nil { return fmt.Errorf("market stats: %w", err) }
+	if err != nil {
+		return fmt.Errorf("market stats: %w", err)
+	}
 	book, err := n.orderBook(ctx, market)
-	if err != nil { return fmt.Errorf("orderbook: %w", err) }
+	if err != nil {
+		return fmt.Errorf("orderbook: %w", err)
+	}
 	portfolio := map[string]any{"mode": "paper", "note": "Balances are simulated; do not infer live balances."}
 	if live {
 		wallet, err := n.wallet(ctx)
-		if err != nil { return fmt.Errorf("wallet: %w", err) }
+		if err != nil {
+			return fmt.Errorf("wallet: %w", err)
+		}
 		portfolio = wallet
 	}
 	decision, err := ai.decide(ctx, map[string]any{"market": market, "stats": stats, "orderbook": book}, portfolio)
-	if err != nil { return err }
-	if decision.Confidence < minConfidence { s.k.Log().Info(fmt.Sprintf("decision rejected: confidence %.3f < %.3f", decision.Confidence, minConfidence)); return nil }
-	if err := risk.validate(decision.Action, decision.QuoteAmount); err != nil { return err }
-	if decision.Action == "hold" { s.k.Log().Info("AI decision: hold"); return nil }
+	if err != nil {
+		return err
+	}
+	if decision.Confidence < minConfidence {
+		s.k.Log().Info("decision rejected: confidence %.3f < %.3f", decision.Confidence, minConfidence)
+		return nil
+	}
+	if err := risk.validate(decision.Action, decision.QuoteAmount); err != nil {
+		return err
+	}
+	if decision.Action == "hold" {
+		s.k.Log().Info("AI decision: hold")
+		return nil
+	}
 	if paper {
-		s.k.Log().Info(fmt.Sprintf("PAPER order: %s %s quote=%.2f confidence=%.3f reason=%s", decision.Action, market, decision.QuoteAmount, decision.Confidence, decision.Reason))
+		s.k.Log().Info("PAPER order: %s %s quote=%.2f confidence=%.3f reason=%s", decision.Action, market, decision.QuoteAmount, decision.Confidence, decision.Reason)
 		return nil
 	}
 	payload := map[string]any{
-		"type": decision.Action,
+		"type":         decision.Action,
 		"srcCurrency": src,
 		"dstCurrency": dst,
-		"amount": decision.QuoteAmount,
+		"amount":      decision.QuoteAmount,
 	}
 	result, err := n.addOrder(ctx, payload)
-	if err != nil { return fmt.Errorf("live order: %w", err) }
-	s.k.Log().Info(fmt.Sprintf("LIVE order accepted: %v", result))
+	if err != nil {
+		return fmt.Errorf("live order: %w", err)
+	}
+	s.k.Log().Info("LIVE order accepted: %v", result)
 	return nil
 }
