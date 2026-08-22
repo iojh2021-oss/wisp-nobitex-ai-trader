@@ -27,9 +27,12 @@ func main() {
 
 	app := fx.New(
 		wisp.Module,
+		fx.Provide(func() *paperExecutor { return newPaperExecutor() }),
 		fx.Provide(func() *approvalGate {
-			return newApprovalGate(envDuration("APPROVAL_TTL", 2*time.Minute))
+			gate := newApprovalGate(envDuration("APPROVAL_TTL", 2*time.Minute))
+			return gate
 		}),
+		fx.Invoke(func(gate *approvalGate, executor *paperExecutor) { gate.executor = executor }),
 		fx.Provide(NewAITraderStrategy),
 		fx.Populate(&rt, &strat, &gate),
 		fx.NopLogger,
@@ -41,7 +44,7 @@ func main() {
 
 	approvalServer := gate.serve()
 	go func() {
-		log.Printf("approval API listening on %s", approvalServer.Addr)
+		log.Printf("approval dashboard/API listening on %s", approvalServer.Addr)
 		if err := approvalServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Printf("approval API: %v", err)
 		}
