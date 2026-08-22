@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"log"
+	"net/http"
 	"os"
 	"time"
 
@@ -40,7 +42,7 @@ func main() {
 	approvalServer := gate.serve()
 	go func() {
 		log.Printf("approval API listening on %s", approvalServer.Addr)
-		if err := approvalServer.ListenAndServe(); err != nil && err.Error() != "http: Server closed" {
+		if err := approvalServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Printf("approval API: %v", err)
 		}
 	}()
