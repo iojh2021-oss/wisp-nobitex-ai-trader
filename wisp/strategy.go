@@ -14,6 +14,9 @@ import (
 
 // AITraderStrategy is the Wisp lifecycle boundary. Wisp owns the long-running
 // loop while deterministic risk controls remain authoritative over the AI.
+//
+// This repository intentionally keeps execution paper-only. It may inspect
+// live market data, but it never submits a financial order automatically.
 type AITraderStrategy struct {
 	strategy.BaseStrategy
 	k wisp.Wisp
@@ -73,25 +76,22 @@ func (s *AITraderStrategy) run(ctx context.Context) {
 	}
 	paper := envBool("PAPER_TRADING", true)
 	live := envBool("LIVE_TRADING_ENABLED", false)
-	if live && paper {
-		s.k.Log().Info("live trading blocked: PAPER_TRADING=true")
-		return
-	}
-	if live && os.Getenv("NOBITEX_TOKEN") == "" {
-		s.k.Log().Info("live trading blocked: NOBITEX_TOKEN is missing")
-		return
+	if !paper || live {
+		s.k.Log().Info("automatic financial execution is disabled; forcing paper mode")
+		paper = true
+		live = false
 	}
 
 	src, dst := splitMarket(market)
-	nobitex := newNobitexClient(baseURL, os.Getenv("NOBITEX_TOKEN"))
+	nobitex := newNobitexClient(baseURL, "")
 	ai := newOpenAIClient(os.Getenv("OPENAI_API_KEY"), model)
 	risk := &riskGate{maxTradeQuote: envFloat("MAX_TRADE_QUOTE", 1000000), maxDailyLossQuote: envFloat("MAX_DAILY_LOSS_QUOTE", 2000000)}
 	interval := envDuration("TRADING_LOOP_INTERVAL", 30*time.Second)
 	minConfidence := envFloat("MIN_CONFIDENCE", 0.70)
 
-	s.k.Log().Info("nobitex-ai-trader: Wisp runtime started market=%s paper=%t live=%t", market, paper, live)
+	s.k.Log().Info("nobitex-ai-trader: Wisp paper runtime started market=%s", market)
 	for {
-		if err := s.tick(ctx, nobitex, ai, risk, src, dst, market, paper, live, minConfidence); err != nil {
+		if err := s.tick(ctx, nobitex, ai, risk, src, dst, market, paper, minConfidence); err != nil {
 			s.k.Log().Failed("nobitex-ai-trader", market, "trading cycle failed", "error", err.Error())
 		}
 		timer := time.NewTimer(interval)
@@ -115,7 +115,7 @@ func splitMarket(market string) (string, string) {
 	return m, "irt"
 }
 
-func (s *AITraderStrategy) tick(ctx context.Context, n *nobitexClient, ai *openAIClient, risk *riskGate, src, dst, market string, paper, live bool, minConfidence float64) error {
+func (s *AITraderStrategy) tick(ctx context.Context, n *nobitexClient, ai *openAIClient, risk *riskGate, src, dst, market string, paper bool, minConfidence float64) error {
 	stats, err := n.marketStats(ctx, src, dst)
 	if err != nil {
 		return fmt.Errorf("market stats: %w", err)
@@ -124,14 +124,7 @@ func (s *AITraderStrategy) tick(ctx context.Context, n *nobitexClient, ai *openA
 	if err != nil {
 		return fmt.Errorf("orderbook: %w", err)
 	}
-	portfolio := map[string]any{"mode": "paper", "note": "Balances are simulated; do not infer live balances."}
-	if live {
-		wallet, err := n.wallet(ctx)
-		if err != nil {
-			return fmt.Errorf("wallet: %w", err)
-		}
-		portfolio = wallet
-	}
+	portfolio := map[string]any{"mode": "paper", "note": "No live balances or orders are used by this runtime."}
 	decision, err := ai.decide(ctx, map[string]any{"market": market, "stats": stats, "orderbook": book}, portfolio)
 	if err != nil {
 		return err
@@ -147,20 +140,9 @@ func (s *AITraderStrategy) tick(ctx context.Context, n *nobitexClient, ai *openA
 		s.k.Log().Info("AI decision: hold")
 		return nil
 	}
-	if paper {
-		s.k.Log().Info("PAPER order: %s %s quote=%.2f confidence=%.3f reason=%s", decision.Action, market, decision.QuoteAmount, decision.Confidence, decision.Reason)
-		return nil
+	if !paper {
+		return fmt.Errorf("execution mode is not paper; refusing automatic order")
 	}
-	payload := map[string]any{
-		"type":         decision.Action,
-		"srcCurrency": src,
-		"dstCurrency": dst,
-		"amount":      decision.QuoteAmount,
-	}
-	result, err := n.addOrder(ctx, payload)
-	if err != nil {
-		return fmt.Errorf("live order: %w", err)
-	}
-	s.k.Log().Info("LIVE order accepted: %v", result)
+	s.k.Log().Info("PAPER order: %s %s quote=%.2f confidence=%.3f reason=%s", decision.Action, market, decision.QuoteAmount, decision.Confidence, decision.Reason)
 	return nil
 }
