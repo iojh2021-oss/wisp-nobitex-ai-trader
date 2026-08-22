@@ -1,0 +1,160 @@
+package main
+
+import (
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"os"
+	"strings"
+	"sync"
+	"time"
+)
+
+// TradeProposal is an advisory decision waiting for explicit human approval.
+// Approval never bypasses deterministic risk validation.
+type TradeProposal struct {
+	ID           string    `json:"id"`
+	CreatedAt    time.Time `json:"created_at"`
+	ExpiresAt    time.Time `json:"expires_at"`
+	Market       string    `json:"market"`
+	Action       string    `json:"action"`
+	QuoteAmount  float64   `json:"quote_amount"`
+	Confidence   float64   `json:"confidence"`
+	Reason       string    `json:"reason"`
+	Status       string    `json:"status"`
+}
+
+type approvalGate struct {
+	mu       sync.Mutex
+	pending  map[string]TradeProposal
+	ttl      time.Duration
+}
+
+func newApprovalGate(ttl time.Duration) *approvalGate {
+	if ttl < time.Second {
+		ttl = 2 * time.Minute
+	}
+	return &approvalGate{pending: make(map[string]TradeProposal), ttl: ttl}
+}
+
+func newProposalID() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+func (g *approvalGate) create(market string, d tradeDecision) (TradeProposal, error) {
+	id, err := newProposalID()
+	if err != nil {
+		return TradeProposal{}, err
+	}
+	now := time.Now().UTC()
+	p := TradeProposal{
+		ID: id, CreatedAt: now, ExpiresAt: now.Add(g.ttl), Market: market,
+		Action: d.Action, QuoteAmount: d.QuoteAmount, Confidence: d.Confidence,
+		Reason: d.Reason, Status: "pending",
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.pending[id] = p
+	return p, nil
+}
+
+func (g *approvalGate) approve(id string) (TradeProposal, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	p, ok := g.pending[id]
+	if !ok {
+		return TradeProposal{}, fmt.Errorf("proposal not found")
+	}
+	if time.Now().UTC().After(p.ExpiresAt) {
+		p.Status = "expired"
+		g.pending[id] = p
+		return p, fmt.Errorf("proposal expired")
+	}
+	if p.Status != "pending" {
+		return p, fmt.Errorf("proposal status is %s", p.Status)
+	}
+	p.Status = "approved"
+	g.pending[id] = p
+	return p, nil
+}
+
+func (g *approvalGate) deny(id string) (TradeProposal, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	p, ok := g.pending[id]
+	if !ok {
+		return TradeProposal{}, fmt.Errorf("proposal not found")
+	}
+	if p.Status != "pending" {
+		return p, fmt.Errorf("proposal status is %s", p.Status)
+	}
+	p.Status = "denied"
+	g.pending[id] = p
+	return p, nil
+}
+
+func (g *approvalGate) list() []TradeProposal {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	now := time.Now().UTC()
+	out := make([]TradeProposal, 0, len(g.pending))
+	for id, p := range g.pending {
+		if p.Status == "pending" && now.After(p.ExpiresAt) {
+			p.Status = "expired"
+			g.pending[id] = p
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+func (g *approvalGate) serve() *http.Server {
+	addr := os.Getenv("APPROVAL_BIND_ADDR")
+	if addr == "" {
+		addr = "127.0.0.1:8787"
+	}
+	token := strings.TrimSpace(os.Getenv("APPROVAL_TOKEN"))
+	mux := http.NewServeMux()
+	auth := func(next http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if token != "" && r.Header.Get("Authorization") != "Bearer "+token {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			next(w, r)
+		}
+	}
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	mux.HandleFunc("/proposals", auth(func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, g.list())
+	}))
+	mux.HandleFunc("/approve", auth(func(w http.ResponseWriter, r *http.Request) {
+		id := r.URL.Query().Get("id")
+		p, err := g.approve(id)
+		if err != nil { writeJSONStatus(w, http.StatusConflict, map[string]any{"error": err.Error(), "proposal": p}); return }
+		writeJSON(w, p)
+	}))
+	mux.HandleFunc("/deny", auth(func(w http.ResponseWriter, r *http.Request) {
+		id := r.URL.Query().Get("id")
+		p, err := g.deny(id)
+		if err != nil { writeJSONStatus(w, http.StatusConflict, map[string]any{"error": err.Error(), "proposal": p}); return }
+		writeJSON(w, p)
+	}))
+	return &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+}
+
+func writeJSON(w http.ResponseWriter, value any) {
+	writeJSONStatus(w, http.StatusOK, value)
+}
+
+func writeJSONStatus(w http.ResponseWriter, status int, value any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(value)
+}
