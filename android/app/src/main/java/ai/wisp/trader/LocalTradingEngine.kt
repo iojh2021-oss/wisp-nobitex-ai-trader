@@ -46,7 +46,6 @@ class LocalTradingEngine(private val client: OkHttpClient) {
     )
 
     fun fetchMarket(market: String, nobitexToken: String): MarketSnapshot {
-        require(nobitexToken.isNotBlank()) { "Nobitex API token is required for private/read-only market access" }
         val normalized = market.trim().uppercase(Locale.US)
         require(normalized.matches(Regex("[A-Z0-9]+"))) { "Invalid market" }
         val src = normalized.removeSuffix("IRT").removeSuffix("USDT")
@@ -136,13 +135,12 @@ ask=${snapshot.ask}
     }
 
     private fun get(url: String, token: String): String {
-        val request = Request.Builder()
+        val builder = Request.Builder()
             .url(url)
-            .header("Authorization", "Token ${token.trim()}")
             .header("User-Agent", "WispTrader/0.2")
             .get()
-            .build()
-        return client.newCall(request).execute().use { response ->
+        if (token.isNotBlank()) builder.header("Authorization", "Token ${token.trim()}")
+        return client.newCall(builder.build()).execute().use { response ->
             val text = response.body?.string().orEmpty()
             if (!response.isSuccessful) error("Nobitex HTTP ${response.code}: ${text.take(300)}")
             text
