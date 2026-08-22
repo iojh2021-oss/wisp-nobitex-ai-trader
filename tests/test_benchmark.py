@@ -1,10 +1,10 @@
 from trader.benchmark import Candle, buy_and_hold, moving_average_strategy, run_benchmark
 
 
-def test_buy_and_hold_accounts_for_fee_once():
+def test_buy_and_hold_accounts_for_entry_and_exit_fee():
     candles = [Candle(i, price) for i, price in enumerate([100, 110, 120])]
     result = run_benchmark(candles, {"hold": buy_and_hold()}, fee=0.001)[0]
-    assert result.final_equity == 119.88
+    assert result.final_equity == 1197.6012
     assert result.total_return > 0
     assert result.trades == 2
 
