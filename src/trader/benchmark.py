@@ -26,7 +26,7 @@ class BenchmarkResult:
 SignalFn = Callable[[Sequence[float], int], str]
 
 
-def _equity_curve(candles: Sequence[Candle], signals: Sequence[str], initial_cash: float, fee: float) -> tuple[list[float], int, int]:
+def _equity_curve(candles: Sequence[Candle], signals: Sequence[str], initial_cash: float, fee: float) -> tuple[list[float], int, int, float]:
     cash = initial_cash
     units = 0.0
     entry_equity = 0.0
@@ -52,14 +52,16 @@ def _equity_curve(candles: Sequence[Candle], signals: Sequence[str], initial_cas
         curve.append(cash + units * price)
 
     if units > 0:
-        final = cash + units * candles[-1].close * (1 - fee)
-        if final > entry_equity:
+        liquidation = units * candles[-1].close * (1 - fee)
+        if liquidation > entry_equity:
             wins += 1
+        final = cash + liquidation
         trades += 1
+        curve[-1] = final
     else:
         final = cash
 
-    return curve, trades, wins
+    return curve, trades, wins, final
 
 
 def _max_drawdown(curve: Sequence[float]) -> float:
@@ -103,8 +105,7 @@ def run_benchmark(
     prices = [c.close for c in data]
     for name, strategy in strategies.items():
         signals = [strategy(prices[: i + 1], i) for i in range(len(data))]
-        curve, trades, wins = _equity_curve(data, signals, initial_cash, fee)
-        final_equity = curve[-1]
+        curve, trades, wins, final_equity = _equity_curve(data, signals, initial_cash, fee)
         results.append(
             BenchmarkResult(
                 name=name,
