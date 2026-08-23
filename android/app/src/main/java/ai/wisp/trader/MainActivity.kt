@@ -46,6 +46,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
@@ -83,9 +84,7 @@ private fun TraderApp() {
     var selectedTab by remember { mutableIntStateOf(0) }
     MaterialTheme(colorScheme = WispDarkColors) {
         Scaffold(
-            topBar = {
-                TopAppBar(title = { Text(if (selectedTab == 0) "Wisp Trader" else "ChatGPT Workspace") })
-            },
+            topBar = { TopAppBar(title = { Text(if (selectedTab == 0) "Wisp Trader" else "ChatGPT Workspace") }) },
             bottomBar = {
                 NavigationBar(containerColor = WispDarkColors.surface) {
                     NavigationBarItem(
@@ -128,10 +127,7 @@ private fun ChatGptBrowserScreen(modifier: Modifier = Modifier) {
     }
 
     BackHandler(enabled = webView?.canGoBack() == true) { webView?.goBack() }
-
-    DisposableEffect(Unit) {
-        onDispose { webView?.stopLoading(); webView = null }
-    }
+    DisposableEffect(Unit) { onDispose { webView?.stopLoading(); webView = null } }
 
     Column(modifier.fillMaxSize()) {
         Row(
@@ -171,10 +167,8 @@ private fun ChatGptBrowserScreen(modifier: Modifier = Modifier) {
                         cacheMode = WebSettings.LOAD_DEFAULT
                         userAgentString = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Mobile Safari/537.36"
                     }
-                    CookieManager.getInstance().apply {
-                        setAcceptCookie(true)
-                        setAcceptThirdPartyCookies(this@apply, true)
-                    }
+                    CookieManager.getInstance().setAcceptCookie(true)
+                    CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                     webChromeClient = WebChromeClient()
                     webViewClient = object : WebViewClient() {
                         override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
