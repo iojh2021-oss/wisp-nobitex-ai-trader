@@ -12,8 +12,8 @@ android {
         applicationId = "ai.wisp.trader"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "0.5.0"
+        versionCode = 7
+        versionName = "0.5.1"
     }
 
     buildFeatures { compose = true }
@@ -34,6 +34,7 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-core")
+    implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("androidx.webkit:webkit:1.12.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
