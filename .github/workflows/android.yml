@@ -25,7 +25,7 @@ jobs:
         with:
           gradle-version: '8.10'
       - name: Prepare ChatGPT Workspace
-        working-directory: .
+        working-directory: ${{ github.workspace }}
         shell: bash
         run: |
           set -euo pipefail
