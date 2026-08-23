@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build-apk:
@@ -43,16 +43,8 @@ jobs:
 
           main = Path('android/app/src/main/java/ai/wisp/trader/MainActivity.kt')
           text = main.read_text()
-          old = 'ChatGptBrowserScreen(Modifier.padding(padding))'
-          if old in text:
-              text = text.replace(old, 'ChatGptWorkspaceScreen(Modifier.padding(padding))', 1)
-
-          if 'import androidx.browser.customtabs.CustomTabsIntent' not in text:
-              text = text.replace(
-                  'import androidx.activity.compose.setContent\n',
-                  'import androidx.activity.compose.setContent\nimport androidx.browser.customtabs.CustomTabsIntent\n',
-                  1,
-              )
+          text = text.replace('import androidx.activity.compose.setContent\n', 'import androidx.activity.compose.setContent\nimport androidx.browser.customtabs.CustomTabsIntent\n', 1)
+          text = text.replace('ChatGptBrowserScreen(Modifier.padding(padding))', 'ChatGptWorkspaceScreen(Modifier.padding(padding))', 1)
 
           workspace = r'''
 
@@ -61,31 +53,19 @@ private fun ChatGptWorkspaceScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     var searchOrUrl by remember { mutableStateOf(CHATGPT_URL) }
 
-    fun openInSupportedBrowser(url: String) {
+    fun openWorkspace(url: String) {
         val target = url.trim().ifBlank { CHATGPT_URL }
         runCatching {
-            val customTabs = CustomTabsIntent.Builder()
+            CustomTabsIntent.Builder()
                 .setShowTitle(true)
                 .setUrlBarHidingEnabled(false)
                 .setShareState(CustomTabsIntent.SHARE_STATE_ON)
                 .setColorScheme(CustomTabsIntent.COLOR_SCHEME_DARK)
                 .build()
-            customTabs.launchUrl(context, android.net.Uri.parse(target))
+                .launchUrl(context, android.net.Uri.parse(target))
         }.onFailure {
-            runCatching {
-                context.startActivity(
-                    android.content.Intent(
-                        android.content.Intent.ACTION_VIEW,
-                        android.net.Uri.parse(target)
-                    )
-                )
-            }
+            openExternalBrowser(context, target)
         }
-    }
-
-    DisposableEffect(Unit) {
-        openInSupportedBrowser(CHATGPT_URL)
-        onDispose { }
     }
 
     Column(
@@ -93,17 +73,10 @@ private fun ChatGptWorkspaceScreen(modifier: Modifier = Modifier) {
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Card(Modifier.fillMaxWidth()) {
-            Column(
-                Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("ChatGPT Workspace", style = MaterialTheme.typography.headlineSmall)
-                Text(
-                    "ChatGPT opens with Android Custom Tabs so the supported Chrome/Brave browser engine, login flow, cookies, JavaScript and redirects are available."
-                )
-                Text(
-                    "The old embedded WebView remains in the source only as legacy code; the ChatGPT tab no longer uses it."
-                )
+                Text("Chrome Custom Tabs is used for the ChatGPT workspace so the real browser login, cookies, JavaScript and redirects are available.")
+                Text("This avoids the blank/loading loop that can occur when ChatGPT is embedded in Android WebView.", style = MaterialTheme.typography.bodySmall)
             }
         }
 
@@ -112,36 +85,29 @@ private fun ChatGptWorkspaceScreen(modifier: Modifier = Modifier) {
             onValueChange = { searchOrUrl = it },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
-            label = { Text("Search / URL") }
+            label = { Text("Address / search") }
         )
 
         Button(
             onClick = {
                 val value = searchOrUrl.trim()
-                val target = if (
-                    value.startsWith("https://") || value.startsWith("http://")
-                ) {
+                val target = if (value.startsWith("https://") || value.startsWith("http://")) {
                     value
                 } else {
-                    "https://www.google.com/search?q=" +
-                        java.net.URLEncoder.encode(value, "UTF-8")
+                    "https://www.google.com/search?q=" + java.net.URLEncoder.encode(value, "UTF-8")
                 }
-                openInSupportedBrowser(target)
+                openWorkspace(target)
             },
             modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Open in Chrome Workspace")
-        }
+        ) { Text("Open in browser workspace") }
 
         OutlinedButton(
-            onClick = { openInSupportedBrowser(CHATGPT_URL) },
+            onClick = { openWorkspace(CHATGPT_URL) },
             modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Open my ChatGPT chat")
-        }
+        ) { Text("Open my ChatGPT chat") }
 
         Text(
-            "For ChatGPT login, use Chrome or Brave on the device. The Trader tab is still native and standalone.",
+            "Login is handled by the installed Chrome/Brave browser. The Trader tab remains native and standalone.",
             style = MaterialTheme.typography.bodySmall
         )
     }
@@ -151,14 +117,6 @@ private fun ChatGptWorkspaceScreen(modifier: Modifier = Modifier) {
               text += workspace
           main.write_text(text)
           PY
-
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add android/app/build.gradle.kts android/app/src/main/java/ai/wisp/trader/MainActivity.kt
-          if ! git diff --cached --quiet; then
-            git commit -m '[bot] patch ChatGPT workspace'
-            git push origin HEAD:main
-          fi
       - name: Verify standalone Android architecture
         run: |
           set -e
