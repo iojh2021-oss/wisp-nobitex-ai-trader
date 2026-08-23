@@ -13,6 +13,13 @@ class NobitexClient:
         self._client = httpx.AsyncClient(timeout=timeout)
         self._headers = {"Authorization": f"Token {token}"} if token else {}
 
+    @classmethod
+    def testnet(cls, token: str, timeout: float = 15.0) -> "NobitexClient":
+        """Create a client that can only address the dedicated Nobitex sandbox."""
+        if not token.strip():
+            raise ValueError("Testnet token is required")
+        return cls("https://testnetapi.nobitex.ir", token=token, timeout=timeout)
+
     async def close(self) -> None:
         await self._client.aclose()
 
@@ -56,7 +63,11 @@ class NobitexClient:
         return response.json()
 
     async def add_order(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """Live-capable endpoint; callers must enforce the separate live-trading gate first."""
+        """Place an order only against the client's configured endpoint.
+
+        Production trading must never reuse a testnet client instance.
+        Callers are responsible for the explicit testnet/live mode gate.
+        """
         response = await self._client.post(
             f"{self.base_url}/market/orders/add", json=payload, headers=self._headers
         )
