@@ -90,11 +90,24 @@ private fun TraderApp() {
             topBar = { TopAppBar(title = { Text(if (selectedTab == 0) "Wisp Trader" else "ChatGPT Workspace") }) },
             bottomBar = {
                 NavigationBar(containerColor = WispDarkColors.surface) {
-                    NavigationBarItem(selected = selectedTab == 0, onClick = { selectedTab = 0 }, icon = { Icon(Icons.Outlined.ShowChart, "Trader") }, label = { Text("Trader") })
-                    NavigationBarItem(selected = selectedTab == 1, onClick = { selectedTab = 1 }, icon = { Icon(Icons.Outlined.ChatBubbleOutline, "ChatGPT") }, label = { Text("ChatGPT") })
+                    NavigationBarItem(
+                        selected = selectedTab == 0,
+                        onClick = { selectedTab = 0 },
+                        icon = { Icon(Icons.Outlined.ShowChart, contentDescription = "Trader") },
+                        label = { Text("Trader") }
+                    )
+                    NavigationBarItem(
+                        selected = selectedTab == 1,
+                        onClick = { selectedTab = 1 },
+                        icon = { Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = "ChatGPT") },
+                        label = { Text("ChatGPT") }
+                    )
                 }
             }
-        ) { pad -> if (selectedTab == 0) TraderScreen(Modifier.padding(pad)) else ChatGptScreen(Modifier.padding(pad)) }
+        ) { pad ->
+            if (selectedTab == 0) TraderScreen(Modifier.padding(pad))
+            else ChatGptScreen(Modifier.padding(pad))
+        }
     }
 }
 
@@ -102,7 +115,15 @@ private fun TraderApp() {
 private fun TraderScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val secrets = remember { SecureTokenStore(context.applicationContext) }
-    val httpClient = remember { OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).writeTimeout(30, TimeUnit.SECONDS).callTimeout(45, TimeUnit.SECONDS).retryOnConnectionFailure(true).build() }
+    val httpClient = remember {
+        OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
+            .callTimeout(45, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(true)
+            .build()
+    }
     val engine = remember { LocalTradingEngine(httpClient) }
     val scope = rememberCoroutineScope()
     var market by remember { mutableStateOf("BTCIRT") }
@@ -114,62 +135,185 @@ private fun TraderScreen(modifier: Modifier = Modifier) {
     var status by remember { mutableStateOf("Ready — standalone mode; Termux is not required") }
     var busy by remember { mutableStateOf(false) }
 
-    fun saveSecrets() { secrets.saveOpenAiKey(openAiKey); secrets.saveNobitexToken(nobitexToken) }
+    fun saveSecrets() {
+        secrets.saveOpenAiKey(openAiKey)
+        secrets.saveNobitexToken(nobitexToken)
+    }
+
     fun loadMarket() {
-        busy = true; saveSecrets()
+        busy = true
+        saveSecrets()
         scope.launch {
             val result = withContext(Dispatchers.IO) { runCatching { engine.fetchMarket(market, nobitexToken) } }
-            result.onSuccess { snapshot = it; status = "Nobitex connected • ${it.market} • read-only market data" }.onFailure { status = "Market data error: ${it.message ?: it.javaClass.simpleName}" }
+            result.onSuccess {
+                snapshot = it
+                status = "Nobitex connected • ${it.market} • read-only market data"
+            }.onFailure {
+                status = "Market data error: ${it.message ?: it.javaClass.simpleName}"
+            }
             busy = false
         }
     }
+
     fun analyzeWithChatGpt() {
         val current = snapshot
         if (current == null) { status = "Fetch market data first"; return }
         if (openAiKey.isBlank()) { status = "Add an OpenAI API key first"; return }
-        busy = true; saveSecrets()
+        busy = true
+        saveSecrets()
         scope.launch {
             val result = withContext(Dispatchers.IO) { runCatching { engine.analyze(current, openAiKey) } }
-            result.onSuccess { proposal = it; status = if (it.status == "pending") "ChatGPT proposal ready • waiting for your approval" else "Risk Gate blocked this proposal" }.onFailure { status = "AI analysis error: ${it.message ?: it.javaClass.simpleName}" }
+            result.onSuccess {
+                proposal = it
+                status = if (it.status == "pending") "ChatGPT proposal ready • waiting for your approval" else "Risk Gate blocked this proposal"
+            }.onFailure {
+                status = "AI analysis error: ${it.message ?: it.javaClass.simpleName}"
+            }
             busy = false
         }
     }
+
     fun approve() {
         val current = proposal ?: return
         busy = true
         scope.launch {
             val result = withContext(Dispatchers.Default) { runCatching { engine.approvePaper(current) } }
-            result.onSuccess { executions = executions + it; proposal = current.copy(status = "approved_paper"); status = "Paper execution completed • no real order was sent" }.onFailure { status = "Approval blocked: ${it.message ?: it.javaClass.simpleName}" }
+            result.onSuccess {
+                executions = executions + it
+                proposal = current.copy(status = "approved_paper")
+                status = "Paper execution completed • no real order was sent"
+            }.onFailure {
+                status = "Approval blocked: ${it.message ?: it.javaClass.simpleName}"
+            }
             busy = false
         }
     }
 
-    LazyColumn(modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { Column(verticalArrangement = Arrangement.spacedBy(4.dp)) { Text("AI Trading Control", style = MaterialTheme.typography.headlineSmall); Text("Standalone Android • v0.4.0", style = MaterialTheme.typography.labelLarge); Text("Direct HTTPS mode. Termux and localhost are not required.", style = MaterialTheme.typography.bodyMedium) } }
+    LazyColumn(
+        modifier = modifier.fillMaxSize().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
         item {
-            Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Connections", style = MaterialTheme.typography.titleLarge)
-                OutlinedTextField(market, { market = it.uppercase(Locale.US).filter(Char::isLetterOrDigit) }, Modifier.fillMaxWidth(), singleLine = true, label = { Text("Nobitex market") }, supportingText = { Text("Example: BTCIRT or BTCUSDT") })
-                OutlinedTextField(nobitexToken, { nobitexToken = it }, Modifier.fillMaxWidth(), singleLine = true, visualTransformation = PasswordVisualTransformation(), label = { Text("Nobitex API token (optional for public data)") })
-                OutlinedTextField(openAiKey, { openAiKey = it }, Modifier.fillMaxWidth(), singleLine = true, visualTransformation = PasswordVisualTransformation(), label = { Text("OpenAI API key") }, supportingText = { Text("Used by the programmatic AI engine; stored with Android Keystore.") })
-                Button(!busy, ::loadMarket, Modifier.fillMaxWidth()) { Text(if (busy) "Working…" else "Connect to Nobitex") }
-            } }
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("AI Trading Control", style = MaterialTheme.typography.headlineSmall)
+                Text("Standalone Android • v0.4.0", style = MaterialTheme.typography.labelLarge)
+                Text("Direct HTTPS mode. Termux and localhost are not required.", style = MaterialTheme.typography.bodyMedium)
+            }
         }
-        item { Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp)) { Text("Status", style = MaterialTheme.typography.titleMedium); Text(status) } } }
+        item {
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Connections", style = MaterialTheme.typography.titleLarge)
+                    OutlinedTextField(
+                        value = market,
+                        onValueChange = { market = it.uppercase(Locale.US).filter(Char::isLetterOrDigit) },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        label = { Text("Nobitex market") },
+                        supportingText = { Text("Example: BTCIRT or BTCUSDT") }
+                    )
+                    OutlinedTextField(
+                        value = nobitexToken,
+                        onValueChange = { nobitexToken = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        label = { Text("Nobitex API token (optional for public data)") }
+                    )
+                    OutlinedTextField(
+                        value = openAiKey,
+                        onValueChange = { openAiKey = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        label = { Text("OpenAI API key") },
+                        supportingText = { Text("Used by the programmatic AI engine; stored with Android Keystore.") }
+                    )
+                    Button(
+                        onClick = ::loadMarket,
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !busy
+                    ) { Text(if (busy) "Working…" else "Connect to Nobitex") }
+                }
+            }
+        }
+        item {
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("Status", style = MaterialTheme.typography.titleMedium)
+                    Text(status)
+                }
+            }
+        }
         snapshot?.let { data ->
-            item { Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Live market data", style = MaterialTheme.typography.titleLarge); Text("${data.market} • read only"); Text("Last: ${data.lastPrice}")
-                Row(Modifier.fillMaxWidth(), Arrangement.spacedBy(12.dp)) { Text("Bid: ${data.bid}", Modifier.weight(1f)); Text("Ask: ${data.ask}", Modifier.weight(1f)) }
-                Row(Modifier.fillMaxWidth(), Arrangement.spacedBy(12.dp)) { Text("High: ${data.high}", Modifier.weight(1f)); Text("Low: ${data.low}", Modifier.weight(1f)) }
-                Text("Volume: ${data.volume}"); OutlinedButton(!busy, ::loadMarket, Modifier.fillMaxWidth()) { Text("Refresh market") }
-            } } }
-            item { Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { Text("ChatGPT analysis", style = MaterialTheme.typography.titleLarge); Text("Structured AI analysis → Risk Gate → paper proposal. Live order execution remains disabled."); Button(!busy, ::analyzeWithChatGpt, Modifier.fillMaxWidth()) { Text("Analyze with ChatGPT API") } } } }
+            item {
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Live market data", style = MaterialTheme.typography.titleLarge)
+                        Text("${data.market} • read only")
+                        Text("Last: ${data.lastPrice}")
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text("Bid: ${data.bid}", Modifier.weight(1f))
+                            Text("Ask: ${data.ask}", Modifier.weight(1f))
+                        }
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text("High: ${data.high}", Modifier.weight(1f))
+                            Text("Low: ${data.low}", Modifier.weight(1f))
+                        }
+                        Text("Volume: ${data.volume}")
+                        OutlinedButton(
+                            onClick = ::loadMarket,
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = !busy
+                        ) { Text("Refresh market") }
+                    }
+                }
+            }
+            item {
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("ChatGPT analysis", style = MaterialTheme.typography.titleLarge)
+                        Text("Structured AI analysis → Risk Gate → paper proposal. Live order execution remains disabled.")
+                        Button(
+                            onClick = ::analyzeWithChatGpt,
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = !busy
+                        ) { Text("Analyze with ChatGPT API") }
+                    }
+                }
+            }
         }
-        proposal?.let { p -> item { Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("AI Proposal", style = MaterialTheme.typography.titleLarge); Text("${p.action.uppercase(Locale.US)} • ${p.market}"); Text("Confidence: ${(p.confidence * 100).toInt()}%"); Text("Paper amount: ${"%.2f".format(Locale.US, p.quoteAmount)}"); Text("Risk status: ${p.status}"); Text(p.reason)
-            if (p.status == "pending") Row(Modifier.fillMaxWidth(), Arrangement.spacedBy(8.dp)) { Button(!busy, ::approve, Modifier.weight(1f)) { Text("Approve paper") }; OutlinedButton(!busy, { proposal = p.copy(status = "denied") }, Modifier.weight(1f)) { Text("Reject") } }
-        } } } }
-        item { Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { Text("Paper executions", style = MaterialTheme.typography.titleLarge); if (executions.isEmpty()) Text("No paper executions yet.") else executions.reversed().forEach { x -> Text("${x.action.uppercase(Locale.US)} ${x.market} • ${"%.2f".format(Locale.US, x.quoteAmount)} • ${x.reference}") } } } }
+        proposal?.let { p ->
+            item {
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("AI Proposal", style = MaterialTheme.typography.titleLarge)
+                        Text("${p.action.uppercase(Locale.US)} • ${p.market}")
+                        Text("Confidence: ${(p.confidence * 100).toInt()}%")
+                        Text("Paper amount: ${"%.2f".format(Locale.US, p.quoteAmount)}")
+                        Text("Risk status: ${p.status}")
+                        Text(p.reason)
+                        if (p.status == "pending") {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(onClick = ::approve, modifier = Modifier.weight(1f), enabled = !busy) { Text("Approve paper") }
+                                OutlinedButton(onClick = { proposal = p.copy(status = "denied") }, modifier = Modifier.weight(1f), enabled = !busy) { Text("Reject") }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        item {
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Paper executions", style = MaterialTheme.typography.titleLarge)
+                    if (executions.isEmpty()) Text("No paper executions yet.")
+                    else executions.reversed().forEach { x ->
+                        Text("${x.action.uppercase(Locale.US)} ${x.market} • ${"%.2f".format(Locale.US, x.quoteAmount)} • ${x.reference}")
+                    }
+                }
+            }
+        }
         item { Text("Safety: this Android app is standalone and paper-only. Do not place shared secrets in source code or APKs.", style = MaterialTheme.typography.bodySmall) }
     }
 }
@@ -205,14 +349,27 @@ private fun ChatGptScreen(modifier: Modifier = Modifier) {
     }
 
     Column(modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { Icon(Icons.Outlined.ChatBubbleOutline, null); Text("ChatGPT Workspace", style = MaterialTheme.typography.headlineSmall) }
-            Text("این تب دیگر WebView محدود نیست. ChatGPT با Chrome Custom Tab باز می‌شود؛ بنابراین ورود به حساب، کوکی‌ها، JavaScript، جستجو، چندصفحه‌ای بودن و امکانات کامل وب در اختیار شماست.")
-            Text("ورود و اطلاعات حساب داخل خود مرورگر انجام می‌شود و کلید یا رمز عبور در Wisp Trader ذخیره نمی‌شود.", style = MaterialTheme.typography.bodySmall)
-            Button(onClick = ::openChatGpt, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Outlined.ChatBubbleOutline, null); Text("  باز کردن ChatGPT با Chrome") }
-            OutlinedButton(onClick = ::openChatGpt, modifier = Modifier.fillMaxWidth()) { Text("جستجو و مرور وب") }
-        } }
-        Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { Text("وضعیت", style = MaterialTheme.typography.titleMedium); Text(message) } }
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = null)
+                    Text("ChatGPT Workspace", style = MaterialTheme.typography.headlineSmall)
+                }
+                Text("این تب دیگر WebView محدود نیست. ChatGPT با Chrome Custom Tab باز می‌شود؛ بنابراین ورود به حساب، کوکی‌ها، JavaScript، جستجو، چندصفحه‌ای بودن و امکانات کامل وب در اختیار شماست.")
+                Text("ورود و اطلاعات حساب داخل خود مرورگر انجام می‌شود و کلید یا رمز عبور در Wisp Trader ذخیره نمی‌شود.", style = MaterialTheme.typography.bodySmall)
+                Button(onClick = ::openChatGpt, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = null)
+                    Text("  باز کردن ChatGPT با Chrome")
+                }
+                OutlinedButton(onClick = ::openChatGpt, modifier = Modifier.fillMaxWidth()) { Text("جستجو و مرور وب") }
+            }
+        }
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("وضعیت", style = MaterialTheme.typography.titleMedium)
+                Text(message)
+            }
+        }
         Text("نکته: موتور کامل Chrome را نمی‌توان داخل Composable جاسازی کرد. Custom Tabs راه استاندارد اندروید برای تجربه مرورگر داخل context اپ است و برای ورود شخص ثالث مناسب‌تر از WebView است.", style = MaterialTheme.typography.bodySmall)
     }
 }
