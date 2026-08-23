@@ -4,20 +4,14 @@ from trader.config import Settings
 from trader.testnet import NobitexTestnetClient, NobitexTestnetExecutor
 
 
-def test_testnet_requires_explicit_token_and_flag(monkeypatch):
-    monkeypatch.setenv("TESTNET_TRADING_ENABLED", "true")
-    monkeypatch.setenv("PAPER_TRADING", "false")
-    monkeypatch.delenv("NOBITEX_TESTNET_TOKEN", raising=False)
-    settings = Settings()
+def test_testnet_requires_explicit_token_and_flag():
+    settings = Settings(testnet_trading_enabled=True, paper_trading=False, nobitex_testnet_token=None)
     with pytest.raises(ValueError, match="NOBITEX_TESTNET_TOKEN"):
         settings.validate()
 
 
-def test_testnet_and_paper_cannot_run_together(monkeypatch):
-    monkeypatch.setenv("TESTNET_TRADING_ENABLED", "true")
-    monkeypatch.setenv("PAPER_TRADING", "true")
-    monkeypatch.setenv("NOBITEX_TESTNET_TOKEN", "sandbox-token")
-    settings = Settings()
+def test_testnet_and_paper_cannot_run_together():
+    settings = Settings(testnet_trading_enabled=True, paper_trading=True, nobitex_testnet_token="sandbox-token")
     with pytest.raises(ValueError, match="cannot be combined"):
         settings.validate()
 
