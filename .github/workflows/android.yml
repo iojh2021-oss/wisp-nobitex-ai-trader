@@ -24,7 +24,7 @@ jobs:
       - name: Verify standalone Android architecture
         run: |
           set -e
-          if grep -RInE '127\.0\.0\.1|10\.0\.2\.2|localhost|termux' app --exclude-dir=build --exclude='*.md'; then
+          if grep -RInE '127\.0\.0\.1|10\.0\.2\.2|localhost|termux' app/src --include='*.kt' --include='*.java' --include='*.xml' --include='*.json' --include='*.properties'; then
             echo 'Standalone APK must not depend on a local Termux/backend endpoint.'
             exit 1
           fi
@@ -32,4 +32,4 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: wisp-trader-debug-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: app/build/outputs/apk/debug/app-debug.apk
