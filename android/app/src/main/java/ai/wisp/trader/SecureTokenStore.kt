@@ -19,7 +19,7 @@ class SecureTokenStore(context: Context) {
         val store = KeyStore.getInstance(keyStoreName).apply { load(null) }
         val existing = store.getKey(keyAlias, null) as? SecretKey
         if (existing != null) return existing
-        val generator = KeyGenerator.getInstance(KeyGenerator.getDefaultAlgorithm(), keyStoreName)
+        val generator = KeyGenerator.getInstance("AES", keyStoreName)
         generator.init(
             android.security.keystore.KeyGenParameterSpec.Builder(
                 keyAlias,
