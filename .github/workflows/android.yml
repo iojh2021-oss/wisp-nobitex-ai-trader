@@ -6,6 +6,9 @@ on:
     paths: ['android/**', '.github/workflows/android.yml']
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-apk:
     runs-on: ubuntu-latest
@@ -21,6 +24,141 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10'
+      - name: Prepare ChatGPT Workspace
+        working-directory: .
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          gradle = Path('android/app/build.gradle.kts')
+          text = gradle.read_text()
+          dependency = '    implementation("androidx.browser:browser:1.10.0")\n'
+          if 'androidx.browser:browser:' not in text:
+              marker = '    implementation("androidx.webkit:webkit:1.12.1")\n'
+              if marker not in text:
+                  raise SystemExit('Browser dependency insertion point not found')
+              gradle.write_text(text.replace(marker, marker + dependency, 1))
+
+          main = Path('android/app/src/main/java/ai/wisp/trader/MainActivity.kt')
+          text = main.read_text()
+          old = 'ChatGptBrowserScreen(Modifier.padding(padding))'
+          if old in text:
+              text = text.replace(old, 'ChatGptWorkspaceScreen(Modifier.padding(padding))', 1)
+
+          if 'import androidx.browser.customtabs.CustomTabsIntent' not in text:
+              text = text.replace(
+                  'import androidx.activity.compose.setContent\n',
+                  'import androidx.activity.compose.setContent\nimport androidx.browser.customtabs.CustomTabsIntent\n',
+                  1,
+              )
+
+          workspace = r'''
+
+@Composable
+private fun ChatGptWorkspaceScreen(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    var searchOrUrl by remember { mutableStateOf(CHATGPT_URL) }
+
+    fun openInSupportedBrowser(url: String) {
+        val target = url.trim().ifBlank { CHATGPT_URL }
+        runCatching {
+            val customTabs = CustomTabsIntent.Builder()
+                .setShowTitle(true)
+                .setUrlBarHidingEnabled(false)
+                .setShareState(CustomTabsIntent.SHARE_STATE_ON)
+                .setColorScheme(CustomTabsIntent.COLOR_SCHEME_DARK)
+                .build()
+            customTabs.launchUrl(context, android.net.Uri.parse(target))
+        }.onFailure {
+            runCatching {
+                context.startActivity(
+                    android.content.Intent(
+                        android.content.Intent.ACTION_VIEW,
+                        android.net.Uri.parse(target)
+                    )
+                )
+            }
+        }
+    }
+
+    DisposableEffect(Unit) {
+        openInSupportedBrowser(CHATGPT_URL)
+        onDispose { }
+    }
+
+    Column(
+        modifier = modifier.fillMaxSize().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Card(Modifier.fillMaxWidth()) {
+            Column(
+                Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text("ChatGPT Workspace", style = MaterialTheme.typography.headlineSmall)
+                Text(
+                    "ChatGPT opens with Android Custom Tabs so the supported Chrome/Brave browser engine, login flow, cookies, JavaScript and redirects are available."
+                )
+                Text(
+                    "The old embedded WebView remains in the source only as legacy code; the ChatGPT tab no longer uses it."
+                )
+            }
+        }
+
+        OutlinedTextField(
+            value = searchOrUrl,
+            onValueChange = { searchOrUrl = it },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            label = { Text("Search / URL") }
+        )
+
+        Button(
+            onClick = {
+                val value = searchOrUrl.trim()
+                val target = if (
+                    value.startsWith("https://") || value.startsWith("http://")
+                ) {
+                    value
+                } else {
+                    "https://www.google.com/search?q=" +
+                        java.net.URLEncoder.encode(value, "UTF-8")
+                }
+                openInSupportedBrowser(target)
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Open in Chrome Workspace")
+        }
+
+        OutlinedButton(
+            onClick = { openInSupportedBrowser(CHATGPT_URL) },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Open my ChatGPT chat")
+        }
+
+        Text(
+            "For ChatGPT login, use Chrome or Brave on the device. The Trader tab is still native and standalone.",
+            style = MaterialTheme.typography.bodySmall
+        )
+    }
+}
+'''
+          if 'private fun ChatGptWorkspaceScreen' not in text:
+              text += workspace
+          main.write_text(text)
+          PY
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add android/app/build.gradle.kts android/app/src/main/java/ai/wisp/trader/MainActivity.kt
+          if ! git diff --cached --quiet; then
+            git commit -m '[bot] patch ChatGPT workspace'
+            git push origin HEAD:main
+          fi
       - name: Verify standalone Android architecture
         run: |
           set -e
