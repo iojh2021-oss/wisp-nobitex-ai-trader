@@ -23,7 +23,10 @@ class TestnetAIRuntime:
         if not settings.openai_api_key:
             raise ValueError("OPENAI_API_KEY is required for the AI runtime")
         self.settings = settings
-        self.client = NobitexTestnetClient(settings.nobitex_testnet_token or "")
+        self.client = NobitexTestnetClient(
+            settings.nobitex_testnet_token or "",
+            base_url=settings.nobitex_testnet_base_url,
+        )
         self.executor = NobitexTestnetExecutor(self.client)
         self.agent = OpenAITradingAgent(settings.openai_api_key, settings.openai_model)
         self.risk = RiskEngine(settings.max_trade_quote, settings.max_daily_loss_quote)
@@ -61,15 +64,20 @@ class TestnetAIRuntime:
         decision = await self.analyze_once()
         if decision["action"] == "hold":
             return {"decision": decision, "execution": None}
-        if decision["confidence"] < 0.70:
-            return {"decision": decision, "execution": None, "blocked": "confidence_below_threshold"}
+        if decision["confidence"] < self.settings.min_confidence:
+            return {
+                "decision": decision,
+                "execution": None,
+                "blocked": "confidence_below_threshold",
+            }
 
         quote_amount = float(decision["quote_amount"])
         self.risk.validate_order(quote_amount)
 
         market = decision["market"]
-        stats = await self.client.ticker(market[:-3].lower(), "rls")
-        latest = float(stats["stats"][f"{market[:-3].lower()}-rls"]["latest"])
+        symbol = market[:-3].lower()
+        stats = await self.client.ticker(symbol, "rls")
+        latest = float(stats["stats"][f"{symbol}-rls"]["latest"])
         client_order_id = f"wisp-ai-{int(datetime.now(timezone.utc).timestamp() * 1000)}"
         execution = await self.executor.place_limit_from_quote(
             market=market,
