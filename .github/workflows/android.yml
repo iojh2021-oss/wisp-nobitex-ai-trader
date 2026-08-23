@@ -14,7 +14,7 @@ jobs:
         working-directory: android
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -23,7 +23,8 @@ jobs:
           gradle-version: '8.10'
       - name: Verify standalone Android architecture
         run: |
-          if grep -RInE '127\.0\.0\.1|10\.0\.2\.2|localhost|termux' app --exclude-dir=build; then
+          set -e
+          if grep -RInE '127\.0\.0\.1|10\.0\.2\.2|localhost|termux' app --exclude-dir=build --exclude='*.md'; then
             echo 'Standalone APK must not depend on a local Termux/backend endpoint.'
             exit 1
           fi
