@@ -4,11 +4,9 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Locale
 
-private const val NOBITEX_BASE_URL = "https://apiv2.nobitex.ir"
 private const val OPENAI_URL = "https://api.openai.com/v1/responses"
 private const val OPENAI_MODEL = "gpt-5.6-luna"
 private const val MIN_CONFIDENCE = 0.70
@@ -23,6 +21,17 @@ class LocalTradingEngine(private val client: OkHttpClient) {
         val volume: String,
         val bid: String,
         val ask: String,
+        val spreadPercent: String,
+        val orderBookImbalance: String,
+        val tradeBuyRatio: String,
+        val rsi14: String,
+        val ema20: String,
+        val ema50: String,
+        val volatilityPercent: String,
+        val trend: String,
+        val candleCount: Int,
+        val recentCandles: String,
+        val recentTrades: String,
         val rawStats: String,
         val rawOrderbook: String,
     )
@@ -45,56 +54,95 @@ class LocalTradingEngine(private val client: OkHttpClient) {
         val reference: String,
     )
 
+    /**
+     * Fetches the full read-only public market snapshot used by the AI.
+     * The optional token is retained for API compatibility but is deliberately
+     * not sent because all endpoints used here are public Nobitex endpoints.
+     */
     fun fetchMarket(market: String, nobitexToken: String): MarketSnapshot {
-        val normalized = market.trim().uppercase(Locale.US)
-        require(normalized.matches(Regex("[A-Z0-9]+"))) { "Invalid market" }
-        val src = normalized.removeSuffix("IRT").removeSuffix("USDT")
-        val dst = if (normalized.endsWith("USDT")) "usdt" else "rls"
-        val stats = get("$NOBITEX_BASE_URL/market/stats?srcCurrency=${src.lowercase()}&dstCurrency=$dst", nobitexToken)
-        val book = get("$NOBITEX_BASE_URL/v3/orderbook/$normalized", nobitexToken)
-        val s = JSONObject(stats)
-        val b = JSONObject(book)
-        val marketStats = s.optJSONObject(normalized) ?: s.optJSONObject(normalized.lowercase()) ?: s
-        val bids = b.optJSONArray("bids")
-        val asks = b.optJSONArray("asks")
+        val repository = NobitexMarketDataRepository(client)
+        val data = repository.fetch(market, resolution = "15", candleCount = 100)
         return MarketSnapshot(
-            market = normalized,
-            lastPrice = firstNonBlank(marketStats, "lastTradePrice", "last", "lastPrice"),
-            high = firstNonBlank(marketStats, "dayHigh", "high", "highPrice"),
-            low = firstNonBlank(marketStats, "dayLow", "low", "lowPrice"),
-            volume = firstNonBlank(marketStats, "volume", "dayVolume"),
-            bid = firstLevelPrice(bids),
-            ask = firstLevelPrice(asks),
-            rawStats = stats,
-            rawOrderbook = book,
+            market = data.symbol,
+            lastPrice = format(data.lastPrice),
+            high = format(data.dayHigh),
+            low = format(data.dayLow),
+            volume = format(data.volumeSrc),
+            bid = format(data.bestBid),
+            ask = format(data.bestAsk),
+            spreadPercent = format(data.spreadPercent),
+            orderBookImbalance = format(data.orderBookImbalance),
+            tradeBuyRatio = format(data.tradeBuyRatio),
+            rsi14 = format(data.rsi14),
+            ema20 = format(data.ema20),
+            ema50 = format(data.ema50),
+            volatilityPercent = format(data.volatilityPercent),
+            trend = data.trend,
+            candleCount = data.candles.size,
+            recentCandles = data.candles.takeLast(12).joinToString(";") {
+                "t=${it.time},o=${it.open},h=${it.high},l=${it.low},c=${it.close},v=${it.volume}"
+            },
+            recentTrades = data.trades.take(20).joinToString(";") {
+                "t=${it.time},p=${it.price},v=${it.volume},type=${it.type}"
+            },
+            rawStats = "symbol=${data.symbol},dayChange=${format(data.dayChangePercent)}",
+            rawOrderbook = "bids=${data.bids.take(20)}, asks=${data.asks.take(20)}",
         )
     }
 
     fun analyze(snapshot: MarketSnapshot, openAiKey: String): Proposal {
         require(openAiKey.isNotBlank()) { "OpenAI API key is required for ChatGPT analysis" }
         val prompt = """
-You are the decision engine for a paper-trading crypto assistant. Analyze ONLY the supplied market snapshot. Do not claim certainty and do not invent missing data. Return JSON only with exactly these fields:
+You are the decision engine for a paper-trading crypto assistant.
+Analyze ONLY the supplied Nobitex public market data. Do not invent missing values.
+The data layer has already fetched statistics, order book, market depth, recent trades and 15-minute OHLC candles.
+Use the derived indicators only as evidence, not as guarantees.
+
+Return JSON only with exactly these fields:
 {"action":"buy|sell|hold","quote_amount":number,"confidence":number,"reason":"short explanation"}
-Rules: confidence must be 0..1. quote_amount is in quote currency. Prefer hold when evidence is weak, conflicting, stale, or incomplete. Never suggest more than 1000000 quote units. This is paper trading only.
-Market snapshot:
-market=${snapshot.market}
+
+Decision rules:
+- confidence must be between 0 and 1.
+- Prefer HOLD when evidence is weak, contradictory, stale, or incomplete.
+- Do not treat an indicator as a guaranteed prediction.
+- Consider trend, RSI, EMA20/EMA50 relationship, volatility, spread, order-book imbalance, recent trade flow and candle structure together.
+- Avoid BUY/SELL when spread or volatility makes the setup unattractive.
+- quote_amount is in the market quote currency and must be <= 1000000.
+- This is paper trading only. Never claim that an order was sent to Nobitex.
+
+MARKET SNAPSHOT
+symbol=${snapshot.market}
 last=${snapshot.lastPrice}
 high=${snapshot.high}
 low=${snapshot.low}
 volume=${snapshot.volume}
-bid=${snapshot.bid}
-ask=${snapshot.ask}
+best_bid=${snapshot.bid}
+best_ask=${snapshot.ask}
+spread_percent=${snapshot.spreadPercent}
+order_book_imbalance=${snapshot.orderBookImbalance}
+recent_trade_buy_ratio=${snapshot.tradeBuyRatio}
+rsi14=${snapshot.rsi14}
+ema20=${snapshot.ema20}
+ema50=${snapshot.ema50}
+volatility_percent=${snapshot.volatilityPercent}
+trend=${snapshot.trend}
+candle_count=${snapshot.candleCount}
+recent_15m_candles=${snapshot.recentCandles}
+recent_trades=${snapshot.recentTrades}
 """.trimIndent()
+
         val body = JSONObject().apply {
             put("model", OPENAI_MODEL)
             put("input", prompt)
         }.toString().toRequestBody("application/json".toMediaType())
+
         val request = Request.Builder()
             .url(OPENAI_URL)
             .header("Authorization", "Bearer ${openAiKey.trim()}")
             .header("Content-Type", "application/json")
             .post(body)
             .build()
+
         val responseText = client.newCall(request).execute().use { response ->
             val text = response.body?.string().orEmpty()
             if (!response.isSuccessful) error("OpenAI HTTP ${response.code}: ${text.take(300)}")
@@ -106,8 +154,10 @@ ask=${snapshot.ask}
         val amount = json.optDouble("quote_amount", 0.0).coerceAtLeast(0.0)
         val confidence = json.optDouble("confidence", 0.0).coerceIn(0.0, 1.0)
         val reason = json.optString("reason", "No reason provided").trim()
+
         require(action in setOf("buy", "sell", "hold")) { "AI returned an invalid action" }
         require(amount <= MAX_PAPER_QUOTE) { "AI proposal exceeds the paper-trading limit" }
+
         return Proposal(
             id = "local-${System.currentTimeMillis()}",
             market = snapshot.market,
@@ -134,36 +184,9 @@ ask=${snapshot.ask}
         )
     }
 
-    private fun get(url: String, token: String): String {
-        val builder = Request.Builder()
-            .url(url)
-            .header("User-Agent", "WispTrader/0.2")
-            .get()
-        if (token.isNotBlank()) builder.header("Authorization", "Token ${token.trim()}")
-        return client.newCall(builder.build()).execute().use { response ->
-            val text = response.body?.string().orEmpty()
-            if (!response.isSuccessful) error("Nobitex HTTP ${response.code}: ${text.take(300)}")
-            text
-        }
-    }
-
-    private fun firstNonBlank(obj: JSONObject, vararg keys: String): String {
-        for (key in keys) {
-            val value = obj.opt(key)
-            if (value != null && value != JSONObject.NULL && value.toString().isNotBlank()) return value.toString()
-        }
-        return "—"
-    }
-
-    private fun firstLevelPrice(levels: JSONArray?): String {
-        if (levels == null || levels.length() == 0) return "—"
-        val first = levels.opt(0)
-        return when (first) {
-            is JSONArray -> first.optString(0, "—")
-            is JSONObject -> firstNonBlank(first, "price")
-            else -> first?.toString() ?: "—"
-        }
-    }
+    private fun format(value: Double?): String = value?.let {
+        if (it.isFinite()) String.format(Locale.US, "%.8f", it).trimEnd('0').trimEnd('.') else "—"
+    } ?: "—"
 
     private fun extractOutputText(root: JSONObject): String {
         val direct = root.optString("output_text", "")
