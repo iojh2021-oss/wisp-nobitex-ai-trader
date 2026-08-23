@@ -54,13 +54,12 @@ class LocalTradingEngine(private val client: OkHttpClient) {
         val reference: String,
     )
 
-    /**
-     * Fetches the full read-only public market snapshot used by the AI.
-     * The optional token is retained for API compatibility but is deliberately
-     * not sent because all endpoints used here are public Nobitex endpoints.
-     */
-    fun fetchMarket(market: String, nobitexToken: String): MarketSnapshot {
-        val repository = NobitexMarketDataRepository(client)
+    fun fetchMarket(
+        market: String,
+        nobitexToken: String,
+        baseUrl: String = "https://api.nobitex.ir",
+    ): MarketSnapshot {
+        val repository = NobitexMarketDataRepository(client, baseUrl = baseUrl)
         val data = repository.fetch(market, resolution = "15", candleCount = 100)
         return MarketSnapshot(
             market = data.symbol,
