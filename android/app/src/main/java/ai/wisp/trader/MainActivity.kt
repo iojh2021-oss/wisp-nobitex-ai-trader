@@ -1,13 +1,7 @@
 package ai.wisp.trader
 
-import android.annotation.SuppressLint
 import android.content.Context
 import android.os.Bundle
-import android.webkit.CookieManager
-import android.webkit.WebChromeClient
-import android.webkit.WebSettings
-import android.webkit.WebView
-import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -43,7 +37,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -56,7 +49,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -389,144 +381,66 @@ private fun TraderScreen(modifier: Modifier = Modifier) {
     }
 }
 
-@SuppressLint("SetJavaScriptEnabled")
 @Composable
 private fun ChatGptBrowserScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
-    var webView by remember { mutableStateOf<WebView?>(null) }
-    var address by remember { mutableStateOf(CHATGPT_URL) }
-    var loading by remember { mutableStateOf(true) }
-    var errorText by remember { mutableStateOf<String?>(null) }
-    var canGoBack by remember { mutableStateOf(false) }
-    var canGoForward by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    var opened by remember { mutableStateOf(false) }
 
-    fun normalizeInput(input: String): String {
-        val value = input.trim()
-        if (value.isBlank()) return CHATGPT_URL
-        if (value.startsWith("http://") || value.startsWith("https://")) return value
-        val encoded = URLEncoder.encode(value, StandardCharsets.UTF_8.toString())
-        return if (value.contains(" ") || !value.contains(".")) {
-            "https://www.google.com/search?q=$encoded"
-        } else {
-            "https://$value"
+    fun openChatGpt() {
+        val uri = android.net.Uri.parse(CHATGPT_URL)
+        val customTabs = androidx.browser.customtabs.CustomTabsIntent.Builder()
+            .setShowTitle(true)
+            .setShareState(androidx.browser.customtabs.CustomTabsIntent.SHARE_STATE_OFF)
+            .build()
+
+        // Prefer Chrome/Custom Tabs. If no Custom Tabs provider is available,
+        // fall back to the device's normal browser instead of showing a
+        // permanent Loading state inside the app.
+        runCatching {
+            customTabs.launchUrl(context, uri)
+        }.onFailure {
+            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, uri)
+            context.startActivity(intent)
         }
     }
 
-    fun navigate(input: String) {
-        errorText = null
-        val url = normalizeInput(input)
-        address = url
-        webView?.loadUrl(url)
+    androidx.activity.compose.BackHandler(enabled = opened) {
+        opened = false
     }
 
-    BackHandler(enabled = webView?.canGoBack() == true) {
-        webView?.goBack()
-    }
-
-    DisposableEffect(Unit) {
-        onDispose {
-            webView?.apply {
-                stopLoading()
-                webView = null
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        if (!opened) {
+            opened = true
+            scope.launch {
+                openChatGpt()
             }
         }
     }
 
-    Column(modifier.fillMaxSize()) {
-        Surface(color = WispDarkColors.surface) {
-            Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
-                Row(
-                    Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    IconButton(onClick = { webView?.goBack() }, enabled = canGoBack) {
-                        Icon(Icons.Outlined.ArrowBack, "Back")
-                    }
-                    IconButton(onClick = { webView?.goForward() }, enabled = canGoForward) {
-                        Icon(Icons.Outlined.ArrowForward, "Forward")
-                    }
-                    IconButton(onClick = { webView?.reload() }) {
-                        Icon(Icons.Outlined.Refresh, "Reload")
-                    }
-                    IconButton(onClick = { webView?.let { openExternalBrowser(context, it.url ?: address) } }) {
-                        Icon(Icons.Outlined.Launch, "Open in browser")
-                    }
-                }
-
-                Row(
-                    Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    OutlinedTextField(
-                        value = address,
-                        onValueChange = { address = it },
-                        modifier = Modifier.weight(1f),
-                        singleLine = true,
-                        label = { Text("Address / search") }
-                    )
-                    IconButton(onClick = { navigate(address) }) {
-                        Icon(Icons.Outlined.Search, "Search")
-                    }
-                }
-            }
-        }
-
-        if (loading) {
-            Text("Loading ChatGPT…", Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
-        }
-        errorText?.let { message ->
-            Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
-                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("Web connection error", style = MaterialTheme.typography.titleMedium)
-                    Text(message)
-                    OutlinedButton(onClick = { webView?.reload() }) { Text("Retry") }
-                }
-            }
-        }
-
-        AndroidView(
-            modifier = Modifier.fillMaxSize(),
-            factory = { ctx: Context ->
-                WebView(ctx).apply {
-                    configureChatGptWebView()
-                    webViewClient = object : WebViewClient() {
-                        override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
-                            loading = true
-                            errorText = null
-                            address = url
-                            canGoBack = view.canGoBack()
-                            canGoForward = view.canGoForward()
-                        }
-
-                        override fun onPageFinished(view: WebView, url: String) {
-                            loading = false
-                            address = url
-                            canGoBack = view.canGoBack()
-                            canGoForward = view.canGoForward()
-                        }
-
-                        override fun onReceivedError(
-                            view: WebView,
-                            request: android.webkit.WebResourceRequest,
-                            error: android.webkit.WebResourceError
-                        ) {
-                            if (request.isForMainFrame) {
-                                loading = false
-                                errorText = error.description?.toString() ?: "Unable to load page"
-                            }
-                        }
-                    }
-                    webChromeClient = WebChromeClient()
-                    loadUrl(CHATGPT_URL)
-                }.also { created -> webView = created }
-            },
-            update = { view ->
-                canGoBack = view.canGoBack()
-                canGoForward = view.canGoForward()
-            }
+    Column(
+        modifier = modifier.fillMaxSize().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        Text("ChatGPT Workspace", style = MaterialTheme.typography.headlineSmall)
+        Text(
+            "ChatGPT opens through Chrome Custom Tabs. No WebView is used for login or chat, so Google/ChatGPT authentication and cookies are handled by the real browser.",
+            style = MaterialTheme.typography.bodyMedium
         )
+        Button(
+            onClick = { opened = true; openChatGpt() },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = null)
+            Text("  Open ChatGPT")
+        }
+        OutlinedButton(
+            onClick = { opened = true; openChatGpt() },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Icon(Icons.Outlined.Launch, contentDescription = null)
+            Text("  Open workspace again")
+        }
     }
 }
 
