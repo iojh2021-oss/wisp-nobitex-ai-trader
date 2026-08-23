@@ -1,30 +1,24 @@
 package ai.wisp.trader
 
-import android.content.ActivityNotFoundException
-import android.content.Intent
-import android.graphics.Color as AndroidColor
-import android.net.Uri
+import android.annotation.SuppressLint
+import android.content.Context
 import android.os.Bundle
 import android.webkit.CookieManager
-import android.webkit.WebResourceRequest
+import android.webkit.WebChromeClient
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.ArrowForward
@@ -38,7 +32,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -61,14 +54,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.ui.window.Dialog
-import androidx.compose.foundation.background
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -110,14 +98,13 @@ class MainActivity : ComponentActivity() {
 private fun TraderApp() {
     var selectedTab by remember { mutableIntStateOf(0) }
 
-    MaterialTheme(
-        colorScheme = WispDarkColors,
-        typography = MaterialTheme.typography.copy(fontFamily = FontFamily.SansSerif)
-    ) {
+    MaterialTheme(colorScheme = WispDarkColors) {
         Scaffold(
             topBar = {
                 TopAppBar(
-                    title = { Text(if (selectedTab == 0) "Wisp Trader" else "ChatGPT Workspace") }
+                    title = {
+                        Text(if (selectedTab == 0) "Wisp Trader" else "ChatGPT Workspace")
+                    }
                 )
             },
             bottomBar = {
@@ -125,20 +112,23 @@ private fun TraderApp() {
                     NavigationBarItem(
                         selected = selectedTab == 0,
                         onClick = { selectedTab = 0 },
-                        icon = { Icon(Icons.Outlined.ShowChart, contentDescription = "Trader") },
+                        icon = { Icon(Icons.Outlined.ShowChart, "Trader") },
                         label = { Text("Trader") }
                     )
                     NavigationBarItem(
                         selected = selectedTab == 1,
                         onClick = { selectedTab = 1 },
-                        icon = { Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = "ChatGPT") },
+                        icon = { Icon(Icons.Outlined.ChatBubbleOutline, "ChatGPT") },
                         label = { Text("ChatGPT") }
                     )
                 }
             }
-        ) { pad ->
-            if (selectedTab == 0) TraderScreen(Modifier.padding(pad))
-            else ChatGptBrowserScreen(Modifier.padding(pad))
+        ) { padding ->
+            if (selectedTab == 0) {
+                TraderScreen(Modifier.padding(padding))
+            } else {
+                ChatGptBrowserScreen(Modifier.padding(padding))
+            }
         }
     }
 }
@@ -158,6 +148,7 @@ private fun TraderScreen(modifier: Modifier = Modifier) {
     }
     val engine = remember { LocalTradingEngine(httpClient) }
     val scope = rememberCoroutineScope()
+
     var market by remember { mutableStateOf("BTCIRT") }
     var openAiKey by remember { mutableStateOf(secrets.readOpenAiKey()) }
     var nobitexToken by remember { mutableStateOf(secrets.readNobitexToken()) }
@@ -219,7 +210,7 @@ private fun TraderScreen(modifier: Modifier = Modifier) {
         }
     }
 
-    fun approve() {
+    fun approvePaper() {
         val current = proposal ?: return
         busy = true
         scope.launch {
@@ -245,9 +236,13 @@ private fun TraderScreen(modifier: Modifier = Modifier) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("AI Trading Control", style = MaterialTheme.typography.headlineSmall)
                 Text("Standalone Android • v0.5.0", style = MaterialTheme.typography.labelLarge)
-                Text("Direct HTTPS mode. Termux and localhost are not required.", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    "Direct HTTPS mode. Termux and localhost are not required.",
+                    style = MaterialTheme.typography.bodyMedium
+                )
             }
         }
+
         item {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -275,24 +270,30 @@ private fun TraderScreen(modifier: Modifier = Modifier) {
                         singleLine = true,
                         visualTransformation = PasswordVisualTransformation(),
                         label = { Text("OpenAI API key") },
-                        supportingText = { Text("Used by the programmatic AI engine; stored with Android Keystore.") }
+                        supportingText = {
+                            Text("Used by the programmatic AI engine; stored with Android Keystore.")
+                        }
                     )
                     Button(
                         onClick = ::loadMarket,
                         modifier = Modifier.fillMaxWidth(),
                         enabled = !busy
-                    ) { Text(if (busy) "Working…" else "Connect to Nobitex") }
+                    ) {
+                        Text(if (busy) "Working…" else "Connect to Nobitex")
+                    }
                 }
             }
         }
+
         item {
             Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("Status", style = MaterialTheme.typography.titleMedium)
                     Text(status)
                 }
             }
         }
+
         snapshot?.let { data ->
             item {
                 Card(Modifier.fillMaxWidth()) {
@@ -331,6 +332,7 @@ private fun TraderScreen(modifier: Modifier = Modifier) {
                 }
             }
         }
+
         proposal?.let { p ->
             item {
                 Card(Modifier.fillMaxWidth()) {
@@ -343,60 +345,78 @@ private fun TraderScreen(modifier: Modifier = Modifier) {
                         Text(p.reason)
                         if (p.status == "pending") {
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Button(onClick = ::approve, modifier = Modifier.weight(1f), enabled = !busy) { Text("Approve paper") }
-                                OutlinedButton(onClick = { proposal = p.copy(status = "denied") }, modifier = Modifier.weight(1f), enabled = !busy) { Text("Reject") }
+                                Button(
+                                    onClick = ::approvePaper,
+                                    modifier = Modifier.weight(1f),
+                                    enabled = !busy
+                                ) { Text("Approve paper") }
+                                OutlinedButton(
+                                    onClick = { proposal = p.copy(status = "denied") },
+                                    modifier = Modifier.weight(1f),
+                                    enabled = !busy
+                                ) { Text("Reject") }
                             }
                         }
                     }
                 }
             }
         }
+
         item {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Paper executions", style = MaterialTheme.typography.titleLarge)
-                    if (executions.isEmpty()) Text("No paper executions yet.")
-                    else executions.reversed().forEach { x ->
-                        Text("${x.action.uppercase(Locale.US)} ${x.market} • ${"%.2f".format(Locale.US, x.quoteAmount)} • ${x.reference}")
+                    if (executions.isEmpty()) {
+                        Text("No paper executions yet.")
+                    } else {
+                        executions.reversed().forEach { execution ->
+                            Text(
+                                "${execution.action.uppercase(Locale.US)} ${execution.market} • " +
+                                    "${"%.2f".format(Locale.US, execution.quoteAmount)} • ${execution.reference}"
+                            )
+                        }
                     }
                 }
             }
         }
+
         item {
             Text(
-                "Safety: this Android app is standalone and paper-only. Do not place shared secrets in source code or APKs.",
+                "Safety: standalone and paper-only. Do not place shared secrets in source code or APKs.",
                 style = MaterialTheme.typography.bodySmall
             )
         }
     }
 }
 
+@SuppressLint("SetJavaScriptEnabled")
 @Composable
 private fun ChatGptBrowserScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     var webView by remember { mutableStateOf<WebView?>(null) }
     var address by remember { mutableStateOf(CHATGPT_URL) }
-    var pageTitle by remember { mutableStateOf("ChatGPT") }
     var loading by remember { mutableStateOf(true) }
     var errorText by remember { mutableStateOf<String?>(null) }
     var canGoBack by remember { mutableStateOf(false) }
     var canGoForward by remember { mutableStateOf(false) }
-    var showHelp by remember { mutableStateOf(false) }
 
     fun normalizeInput(input: String): String {
         val value = input.trim()
         if (value.isBlank()) return CHATGPT_URL
         if (value.startsWith("http://") || value.startsWith("https://")) return value
-        if (value.contains(" ") || !value.contains(".")) {
-            val encoded = URLEncoder.encode(value, StandardCharsets.UTF_8.toString())
-            return "https://www.google.com/search?q=$encoded"
+        val encoded = URLEncoder.encode(value, StandardCharsets.UTF_8.toString())
+        return if (value.contains(" ") || !value.contains(".")) {
+            "https://www.google.com/search?q=$encoded"
+        } else {
+            "https://$value"
         }
-        return "https://$value"
     }
 
     fun navigate(input: String) {
         errorText = null
-        webView?.loadUrl(normalizeInput(input))
+        val url = normalizeInput(input)
+        address = url
+        webView?.loadUrl(url)
     }
 
     BackHandler(enabled = webView?.canGoBack() == true) {
@@ -404,176 +424,137 @@ private fun ChatGptBrowserScreen(modifier: Modifier = Modifier) {
     }
 
     DisposableEffect(Unit) {
-        onDispose { webView?.stopLoading() }
+        onDispose {
+            webView?.apply {
+                stopLoading()
+                webView = null
+            }
+        }
     }
 
     Column(modifier.fillMaxSize()) {
         Surface(color = WispDarkColors.surface) {
             Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     IconButton(onClick = { webView?.goBack() }, enabled = canGoBack) {
-                        Icon(Icons.Outlined.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.Outlined.ArrowBack, "Back")
                     }
                     IconButton(onClick = { webView?.goForward() }, enabled = canGoForward) {
-                        Icon(Icons.Outlined.ArrowForward, contentDescription = "Forward")
+                        Icon(Icons.Outlined.ArrowForward, "Forward")
                     }
+                    IconButton(onClick = { webView?.reload() }) {
+                        Icon(Icons.Outlined.Refresh, "Reload")
+                    }
+                    IconButton(onClick = { webView?.let { openExternalBrowser(context, it.url ?: address) } }) {
+                        Icon(Icons.Outlined.Launch, "Open in browser")
+                    }
+                }
+
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     OutlinedTextField(
                         value = address,
                         onValueChange = { address = it },
                         modifier = Modifier.weight(1f),
                         singleLine = true,
-                        shape = RoundedCornerShape(22.dp),
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.Uri,
-                            imeAction = ImeAction.Go
-                        ),
-                        keyboardActions = KeyboardActions(onGo = { navigate(address) }),
-                        leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) }
+                        label = { Text("Address / search") }
                     )
                     IconButton(onClick = { navigate(address) }) {
-                        Icon(Icons.Outlined.Search, contentDescription = "Go")
-                    }
-                }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(pageTitle, Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
-                    IconButton(onClick = { webView?.reload() }) {
-                        Icon(Icons.Outlined.Refresh, contentDescription = "Reload")
-                    }
-                    IconButton(onClick = { showHelp = true }) {
-                        Icon(Icons.Outlined.Launch, contentDescription = "Browser help")
+                        Icon(Icons.Outlined.Search, "Search")
                     }
                 }
             }
         }
 
-        if (loading) LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp))
+        if (loading) {
+            Text("Loading ChatGPT…", Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+        }
+        errorText?.let { message ->
+            Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Web connection error", style = MaterialTheme.typography.titleMedium)
+                    Text(message)
+                    OutlinedButton(onClick = { webView?.reload() }) { Text("Retry") }
+                }
+            }
+        }
 
-        Box(Modifier.fillMaxSize().weight(1f)) {
-            AndroidView(
-                modifier = Modifier.fillMaxSize(),
-                factory = { viewContext ->
-                    WebView(viewContext).apply {
-                        webView = this
-                        setBackgroundColor(AndroidColor.rgb(13, 15, 18))
-                        settings.javaScriptEnabled = true
-                        settings.domStorageEnabled = true
-                        settings.databaseEnabled = true
-                        settings.loadsImagesAutomatically = true
-                        settings.mediaPlaybackRequiresUserGesture = true
-                        settings.allowFileAccess = false
-                        settings.allowContentAccess = true
-                        settings.builtInZoomControls = false
-                        settings.displayZoomControls = false
-                        settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
-                        settings.userAgentString = settings.userAgentString.replace("; wv", "")
-
-                        val cookies = CookieManager.getInstance()
-                        cookies.setAcceptCookie(true)
-                        cookies.setAcceptThirdPartyCookies(this, true)
-
-                        webViewClient = object : WebViewClient() {
-                            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                                val url = request.url.toString()
-                                return if (url.startsWith("http://") || url.startsWith("https://")) {
-                                    false
-                                } else {
-                                    runCatching {
-                                        context.startActivity(Intent(Intent.ACTION_VIEW, request.url))
-                                    }
-                                    true
-                                }
-                            }
-
-                            override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
-                                loading = true
-                                errorText = null
-                                address = url
-                                canGoBack = view.canGoBack()
-                                canGoForward = view.canGoForward()
-                            }
-
-                            override fun onPageFinished(view: WebView, url: String) {
-                                loading = false
-                                address = url
-                                pageTitle = view.title?.takeIf { it.isNotBlank() } ?: "ChatGPT"
-                                canGoBack = view.canGoBack()
-                                canGoForward = view.canGoForward()
-                                CookieManager.getInstance().flush()
-                            }
-
-                            override fun onReceivedError(
-                                view: WebView,
-                                request: WebResourceRequest,
-                                error: android.webkit.WebResourceError
-                            ) {
-                                if (request.isForMainFrame) {
-                                    loading = false
-                                    errorText = error.description?.toString()
-                                }
-                            }
+        AndroidView(
+            modifier = Modifier.fillMaxSize(),
+            factory = { ctx: Context ->
+                WebView(ctx).apply {
+                    configureChatGptWebView()
+                    webViewClient = object : WebViewClient() {
+                        override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
+                            loading = true
+                            errorText = null
+                            address = url
+                            canGoBack = view.canGoBack()
+                            canGoForward = view.canGoForward()
                         }
 
-                        loadUrl(CHATGPT_URL)
-                    }
-                },
-                update = { current ->
-                    webView = current
-                }
-            )
+                        override fun onPageFinished(view: WebView, url: String) {
+                            loading = false
+                            address = url
+                            canGoBack = view.canGoBack()
+                            canGoForward = view.canGoForward()
+                        }
 
-            errorText?.let { error ->
-                Card(
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .padding(20.dp)
-                ) {
-                    Column(
-                        Modifier.padding(18.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Text("ChatGPT page could not be loaded", style = MaterialTheme.typography.titleMedium)
-                        Text(error)
-                        Button(onClick = { webView?.reload() }) { Text("Retry") }
-                    }
-                }
-            }
-        }
-    }
-
-    if (showHelp) {
-        Dialog(onDismissRequest = { showHelp = false }) {
-            Card {
-                Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("ChatGPT Workspace", style = MaterialTheme.typography.headlineSmall)
-                    Text("این تب یک مرورگر داخلی واقعی است: ورود به حساب، کوکی و نشست، JavaScript، جستجو، لینک‌ها، عقب/جلو و Refresh داخل خود Wisp Trader انجام می‌شود.")
-                    Text("اگر صفحه ورود به دلیل سیاست امنیتی سرویس داخل WebView اجازه ورود نداد، دکمه زیر همان صفحه را با Chrome باز می‌کند؛ نشست Chrome نیز مستقل از کلید API است.", style = MaterialTheme.typography.bodySmall)
-                    Button(
-                        onClick = {
-                            showHelp = false
-                            try {
-                                context.startActivity(
-                                    Intent(Intent.ACTION_VIEW, Uri.parse(CHATGPT_URL)).setPackage("com.android.chrome")
-                                )
-                            } catch (_: ActivityNotFoundException) {
-                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(CHATGPT_URL)))
+                        override fun onReceivedError(
+                            view: WebView,
+                            request: android.webkit.WebResourceRequest,
+                            error: android.webkit.WebResourceError
+                        ) {
+                            if (request.isForMainFrame) {
+                                loading = false
+                                errorText = error.description?.toString() ?: "Unable to load page"
                             }
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Open in Chrome")
+                        }
                     }
-                    OutlinedButton(onClick = { showHelp = false }, modifier = Modifier.fillMaxWidth()) {
-                        Text("Close")
-                    }
-                }
+                    webChromeClient = WebChromeClient()
+                    loadUrl(CHATGPT_URL)
+                }.also { created -> webView = created }
+            },
+            update = { view ->
+                canGoBack = view.canGoBack()
+                canGoForward = view.canGoForward()
             }
-        }
+        )
+    }
+}
+
+@SuppressLint("SetJavaScriptEnabled")
+private fun WebView.configureChatGptWebView() {
+    settings.apply {
+        javaScriptEnabled = true
+        domStorageEnabled = true
+        databaseEnabled = true
+        loadsImagesAutomatically = true
+        javaScriptCanOpenWindowsAutomatically = true
+        setSupportMultipleWindows(false)
+        mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+        cacheMode = WebSettings.LOAD_DEFAULT
+        userAgentString = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Mobile Safari/537.36"
+    }
+    CookieManager.getInstance().apply {
+        setAcceptCookie(true)
+        setAcceptThirdPartyCookies(this@configureChatGptWebView, true)
+    }
+    isFocusable = true
+    isFocusableInTouchMode = true
+    requestFocus()
+}
+
+private fun openExternalBrowser(context: Context, url: String) {
+    runCatching {
+        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
+        context.startActivity(intent)
     }
 }
