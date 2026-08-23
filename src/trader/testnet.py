@@ -16,10 +16,12 @@ class NobitexTestnetClient(NobitexClient):
     token/base URL cannot accidentally be mixed with production settings.
     """
 
-    def __init__(self, token: str, timeout: float = 15.0) -> None:
+    def __init__(self, token: str, base_url: str = TESTNET_BASE_URL, timeout: float = 15.0) -> None:
         if not token:
             raise ValueError("Nobitex testnet token is required")
-        super().__init__(TESTNET_BASE_URL, token=token, timeout=timeout)
+        if not base_url.startswith("https://"):
+            raise ValueError("Nobitex testnet endpoint must use HTTPS")
+        super().__init__(base_url, token=token, timeout=timeout)
 
 
 class NobitexTestnetExecutor:
@@ -41,15 +43,15 @@ class NobitexTestnetExecutor:
         if quote_amount <= 0 or price <= 0:
             raise ValueError("quote_amount and price must be positive")
 
-        src, dst = market.upper().split("IRT", 1) if market.upper().endswith("IRT") else (None, None)
-        if src is None or not src:
+        symbol = market.upper()
+        if not symbol.endswith("IRT"):
             raise ValueError("testnet executor currently expects an IRT market such as BTCIRT")
-        dst = "rls"
+        src = symbol[:-3]
         amount = quote_amount / price
         payload = {
             "type": side,
             "srcCurrency": src.lower(),
-            "dstCurrency": dst,
+            "dstCurrency": "rls",
             "amount": f"{amount:.12f}",
             "price": price,
             "execution": "limit",
