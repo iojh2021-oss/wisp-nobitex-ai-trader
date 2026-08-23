@@ -21,6 +21,12 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10'
+      - name: Verify standalone Android architecture
+        run: |
+          if grep -RInE '127\.0\.0\.1|10\.0\.2\.2|localhost|termux' app --exclude-dir=build; then
+            echo 'Standalone APK must not depend on a local Termux/backend endpoint.'
+            exit 1
+          fi
       - run: gradle assembleDebug --no-daemon
       - uses: actions/upload-artifact@v4
         with:
