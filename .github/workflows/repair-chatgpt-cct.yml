@@ -1,0 +1,34 @@
+name: Repair ChatGPT Workspace
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/repair_chatgpt_cct.py'
+      - '.github/workflows/repair-chatgpt-cct.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Apply native ChatGPT workspace fix
+        run: python3 scripts/repair_chatgpt_cct.py
+
+      - name: Commit repaired Android workspace
+        run: |
+          if git diff --quiet; then
+            echo "No changes needed"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add android/app/src/main/java/ai/wisp/trader/MainActivity.kt android/app/build.gradle.kts
+          git commit -m "fix(android): use Chrome Custom Tabs for ChatGPT workspace"
+          git push
