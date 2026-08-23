@@ -24,7 +24,10 @@ jobs:
       - name: Verify standalone Android architecture
         run: |
           set -e
-          if grep -RInE '127\.0\.0\.1|10\.0\.2\.2|localhost|termux' app/src --include='*.kt' --include='*.java' --include='*.xml' --include='*.json' --include='*.properties'; then
+          matches="$(grep -RInE '127\.0\.0\.1|10\.0\.2\.2|localhost|termux' app/src --include='*.kt' --include='*.java' --include='*.xml' --include='*.json' --include='*.properties' || true)"
+          unexpected="$(printf '%s\n' "$matches" | grep -Ev 'MainActivity\.kt:.*No Termux, localhost backend, or emulator address is required' || true)"
+          if [ -n "$unexpected" ]; then
+            printf '%s\n' "$unexpected"
             echo 'Standalone APK must not depend on a local Termux/backend endpoint.'
             exit 1
           fi
