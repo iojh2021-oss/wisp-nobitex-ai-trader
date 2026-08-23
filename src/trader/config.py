@@ -22,6 +22,7 @@ class Settings:
     paper_trading: bool = _bool("PAPER_TRADING", True)
     testnet_trading_enabled: bool = _bool("TESTNET_TRADING_ENABLED", False)
     live_trading_enabled: bool = _bool("LIVE_TRADING_ENABLED", False)
+    min_confidence: float = float(os.getenv("MIN_CONFIDENCE", "0.70"))
     max_trade_quote: float = float(os.getenv("MAX_TRADE_QUOTE", "1000000"))
     max_daily_loss_quote: float = float(os.getenv("MAX_DAILY_LOSS_QUOTE", "2000000"))
 
@@ -34,5 +35,7 @@ class Settings:
             raise ValueError("Testnet trading requires NOBITEX_TESTNET_TOKEN")
         if self.live_trading_enabled and not self.nobitex_token:
             raise ValueError("Live trading requires NOBITEX_TOKEN")
+        if not 0 < self.min_confidence <= 1:
+            raise ValueError("MIN_CONFIDENCE must be between 0 and 1")
         if self.max_trade_quote <= 0 or self.max_daily_loss_quote <= 0:
             raise ValueError("Risk limits must be positive")
