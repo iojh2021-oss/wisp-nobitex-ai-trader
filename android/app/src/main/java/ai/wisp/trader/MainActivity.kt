@@ -1,53 +1,80 @@
 package ai.wisp.trader
 
 import android.content.ActivityNotFoundException
+import android.content.Intent
 import android.graphics.Color as AndroidColor
 import android.net.Uri
 import android.os.Bundle
+import android.webkit.CookieManager
+import android.webkit.WebResourceRequest
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
-import androidx.browser.customtabs.CustomTabColorSchemeParams
-import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.ArrowForward
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
+import androidx.compose.material.icons.outlined.Launch
+import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.ShowChart
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
+import androidx.compose.foundation.background
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
@@ -82,12 +109,17 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun TraderApp() {
     var selectedTab by remember { mutableIntStateOf(0) }
+
     MaterialTheme(
         colorScheme = WispDarkColors,
         typography = MaterialTheme.typography.copy(fontFamily = FontFamily.SansSerif)
     ) {
         Scaffold(
-            topBar = { TopAppBar(title = { Text(if (selectedTab == 0) "Wisp Trader" else "ChatGPT Workspace") }) },
+            topBar = {
+                TopAppBar(
+                    title = { Text(if (selectedTab == 0) "Wisp Trader" else "ChatGPT Workspace") }
+                )
+            },
             bottomBar = {
                 NavigationBar(containerColor = WispDarkColors.surface) {
                     NavigationBarItem(
@@ -106,7 +138,7 @@ private fun TraderApp() {
             }
         ) { pad ->
             if (selectedTab == 0) TraderScreen(Modifier.padding(pad))
-            else ChatGptScreen(Modifier.padding(pad))
+            else ChatGptBrowserScreen(Modifier.padding(pad))
         }
     }
 }
@@ -144,7 +176,9 @@ private fun TraderScreen(modifier: Modifier = Modifier) {
         busy = true
         saveSecrets()
         scope.launch {
-            val result = withContext(Dispatchers.IO) { runCatching { engine.fetchMarket(market, nobitexToken) } }
+            val result = withContext(Dispatchers.IO) {
+                runCatching { engine.fetchMarket(market, nobitexToken) }
+            }
             result.onSuccess {
                 snapshot = it
                 status = "Nobitex connected • ${it.market} • read-only market data"
@@ -157,15 +191,27 @@ private fun TraderScreen(modifier: Modifier = Modifier) {
 
     fun analyzeWithChatGpt() {
         val current = snapshot
-        if (current == null) { status = "Fetch market data first"; return }
-        if (openAiKey.isBlank()) { status = "Add an OpenAI API key first"; return }
+        if (current == null) {
+            status = "Fetch market data first"
+            return
+        }
+        if (openAiKey.isBlank()) {
+            status = "Add an OpenAI API key first"
+            return
+        }
         busy = true
         saveSecrets()
         scope.launch {
-            val result = withContext(Dispatchers.IO) { runCatching { engine.analyze(current, openAiKey) } }
+            val result = withContext(Dispatchers.IO) {
+                runCatching { engine.analyze(current, openAiKey) }
+            }
             result.onSuccess {
                 proposal = it
-                status = if (it.status == "pending") "ChatGPT proposal ready • waiting for your approval" else "Risk Gate blocked this proposal"
+                status = if (it.status == "pending") {
+                    "ChatGPT proposal ready • waiting for your approval"
+                } else {
+                    "Risk Gate blocked this proposal"
+                }
             }.onFailure {
                 status = "AI analysis error: ${it.message ?: it.javaClass.simpleName}"
             }
@@ -177,7 +223,9 @@ private fun TraderScreen(modifier: Modifier = Modifier) {
         val current = proposal ?: return
         busy = true
         scope.launch {
-            val result = withContext(Dispatchers.Default) { runCatching { engine.approvePaper(current) } }
+            val result = withContext(Dispatchers.Default) {
+                runCatching { engine.approvePaper(current) }
+            }
             result.onSuccess {
                 executions = executions + it
                 proposal = current.copy(status = "approved_paper")
@@ -196,7 +244,7 @@ private fun TraderScreen(modifier: Modifier = Modifier) {
         item {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("AI Trading Control", style = MaterialTheme.typography.headlineSmall)
-                Text("Standalone Android • v0.4.0", style = MaterialTheme.typography.labelLarge)
+                Text("Standalone Android • v0.5.0", style = MaterialTheme.typography.labelLarge)
                 Text("Direct HTTPS mode. Termux and localhost are not required.", style = MaterialTheme.typography.bodyMedium)
             }
         }
@@ -314,62 +362,218 @@ private fun TraderScreen(modifier: Modifier = Modifier) {
                 }
             }
         }
-        item { Text("Safety: this Android app is standalone and paper-only. Do not place shared secrets in source code or APKs.", style = MaterialTheme.typography.bodySmall) }
+        item {
+            Text(
+                "Safety: this Android app is standalone and paper-only. Do not place shared secrets in source code or APKs.",
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
     }
 }
 
 @Composable
-private fun ChatGptScreen(modifier: Modifier = Modifier) {
+private fun ChatGptBrowserScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
-    var message by remember { mutableStateOf("ChatGPT uses Chrome/Custom Tabs for secure sign-in and full web features.") }
+    var webView by remember { mutableStateOf<WebView?>(null) }
+    var address by remember { mutableStateOf(CHATGPT_URL) }
+    var pageTitle by remember { mutableStateOf("ChatGPT") }
+    var loading by remember { mutableStateOf(true) }
+    var errorText by remember { mutableStateOf<String?>(null) }
+    var canGoBack by remember { mutableStateOf(false) }
+    var canGoForward by remember { mutableStateOf(false) }
+    var showHelp by remember { mutableStateOf(false) }
 
-    fun openChatGpt() {
-        val colors = CustomTabColorSchemeParams.Builder()
-            .setToolbarColor(AndroidColor.rgb(13, 15, 18))
-            .setNavigationBarColor(AndroidColor.rgb(8, 10, 15))
-            .build()
-        val customTabs = CustomTabsIntent.Builder()
-            .setShowTitle(true)
-            .setShareState(CustomTabsIntent.SHARE_STATE_ON)
-            .setDefaultColorSchemeParams(colors)
-            .build()
-        customTabs.intent.setPackage("com.android.chrome")
-        try {
-            customTabs.launchUrl(context, Uri.parse(CHATGPT_URL))
-            message = "ChatGPT opened in Chrome-powered Custom Tab. Browser cookies/session are used."
-        } catch (_: ActivityNotFoundException) {
-            customTabs.intent.setPackage(null)
-            try {
-                customTabs.launchUrl(context, Uri.parse(CHATGPT_URL))
-                message = "ChatGPT opened in your default supported browser."
-            } catch (error: Exception) {
-                message = "Could not open a supported browser: ${error.message ?: error.javaClass.simpleName}"
+    fun normalizeInput(input: String): String {
+        val value = input.trim()
+        if (value.isBlank()) return CHATGPT_URL
+        if (value.startsWith("http://") || value.startsWith("https://")) return value
+        if (value.contains(" ") || !value.contains(".")) {
+            val encoded = URLEncoder.encode(value, StandardCharsets.UTF_8.toString())
+            return "https://www.google.com/search?q=$encoded"
+        }
+        return "https://$value"
+    }
+
+    fun navigate(input: String) {
+        errorText = null
+        webView?.loadUrl(normalizeInput(input))
+    }
+
+    BackHandler(enabled = webView?.canGoBack() == true) {
+        webView?.goBack()
+    }
+
+    DisposableEffect(Unit) {
+        onDispose { webView?.stopLoading() }
+    }
+
+    Column(modifier.fillMaxSize()) {
+        Surface(color = WispDarkColors.surface) {
+            Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    IconButton(onClick = { webView?.goBack() }, enabled = canGoBack) {
+                        Icon(Icons.Outlined.ArrowBack, contentDescription = "Back")
+                    }
+                    IconButton(onClick = { webView?.goForward() }, enabled = canGoForward) {
+                        Icon(Icons.Outlined.ArrowForward, contentDescription = "Forward")
+                    }
+                    OutlinedTextField(
+                        value = address,
+                        onValueChange = { address = it },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        shape = RoundedCornerShape(22.dp),
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Uri,
+                            imeAction = ImeAction.Go
+                        ),
+                        keyboardActions = KeyboardActions(onGo = { navigate(address) }),
+                        leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) }
+                    )
+                    IconButton(onClick = { navigate(address) }) {
+                        Icon(Icons.Outlined.Search, contentDescription = "Go")
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(pageTitle, Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
+                    IconButton(onClick = { webView?.reload() }) {
+                        Icon(Icons.Outlined.Refresh, contentDescription = "Reload")
+                    }
+                    IconButton(onClick = { showHelp = true }) {
+                        Icon(Icons.Outlined.Launch, contentDescription = "Browser help")
+                    }
+                }
+            }
+        }
+
+        if (loading) LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp))
+
+        Box(Modifier.fillMaxSize().weight(1f)) {
+            AndroidView(
+                modifier = Modifier.fillMaxSize(),
+                factory = { viewContext ->
+                    WebView(viewContext).apply {
+                        webView = this
+                        setBackgroundColor(AndroidColor.rgb(13, 15, 18))
+                        settings.javaScriptEnabled = true
+                        settings.domStorageEnabled = true
+                        settings.databaseEnabled = true
+                        settings.loadsImagesAutomatically = true
+                        settings.mediaPlaybackRequiresUserGesture = true
+                        settings.allowFileAccess = false
+                        settings.allowContentAccess = true
+                        settings.builtInZoomControls = false
+                        settings.displayZoomControls = false
+                        settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
+                        settings.userAgentString = settings.userAgentString.replace("; wv", "")
+
+                        val cookies = CookieManager.getInstance()
+                        cookies.setAcceptCookie(true)
+                        cookies.setAcceptThirdPartyCookies(this, true)
+
+                        webViewClient = object : WebViewClient() {
+                            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                                val url = request.url.toString()
+                                return if (url.startsWith("http://") || url.startsWith("https://")) {
+                                    false
+                                } else {
+                                    runCatching {
+                                        context.startActivity(Intent(Intent.ACTION_VIEW, request.url))
+                                    }
+                                    true
+                                }
+                            }
+
+                            override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
+                                loading = true
+                                errorText = null
+                                address = url
+                                canGoBack = view.canGoBack()
+                                canGoForward = view.canGoForward()
+                            }
+
+                            override fun onPageFinished(view: WebView, url: String) {
+                                loading = false
+                                address = url
+                                pageTitle = view.title?.takeIf { it.isNotBlank() } ?: "ChatGPT"
+                                canGoBack = view.canGoBack()
+                                canGoForward = view.canGoForward()
+                                CookieManager.getInstance().flush()
+                            }
+
+                            override fun onReceivedError(
+                                view: WebView,
+                                request: WebResourceRequest,
+                                error: android.webkit.WebResourceError
+                            ) {
+                                if (request.isForMainFrame) {
+                                    loading = false
+                                    errorText = error.description?.toString()
+                                }
+                            }
+                        }
+
+                        loadUrl(CHATGPT_URL)
+                    }
+                },
+                update = { current ->
+                    webView = current
+                }
+            )
+
+            errorText?.let { error ->
+                Card(
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .padding(20.dp)
+                ) {
+                    Column(
+                        Modifier.padding(18.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text("ChatGPT page could not be loaded", style = MaterialTheme.typography.titleMedium)
+                        Text(error)
+                        Button(onClick = { webView?.reload() }) { Text("Retry") }
+                    }
+                }
             }
         }
     }
 
-    Column(modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = null)
+    if (showHelp) {
+        Dialog(onDismissRequest = { showHelp = false }) {
+            Card {
+                Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text("ChatGPT Workspace", style = MaterialTheme.typography.headlineSmall)
+                    Text("این تب یک مرورگر داخلی واقعی است: ورود به حساب، کوکی و نشست، JavaScript، جستجو، لینک‌ها، عقب/جلو و Refresh داخل خود Wisp Trader انجام می‌شود.")
+                    Text("اگر صفحه ورود به دلیل سیاست امنیتی سرویس داخل WebView اجازه ورود نداد، دکمه زیر همان صفحه را با Chrome باز می‌کند؛ نشست Chrome نیز مستقل از کلید API است.", style = MaterialTheme.typography.bodySmall)
+                    Button(
+                        onClick = {
+                            showHelp = false
+                            try {
+                                context.startActivity(
+                                    Intent(Intent.ACTION_VIEW, Uri.parse(CHATGPT_URL)).setPackage("com.android.chrome")
+                                )
+                            } catch (_: ActivityNotFoundException) {
+                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(CHATGPT_URL)))
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Open in Chrome")
+                    }
+                    OutlinedButton(onClick = { showHelp = false }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Close")
+                    }
                 }
-                Text("این تب دیگر WebView محدود نیست. ChatGPT با Chrome Custom Tab باز می‌شود؛ بنابراین ورود به حساب، کوکی‌ها، JavaScript، جستجو، چندصفحه‌ای بودن و امکانات کامل وب در اختیار شماست.")
-                Text("ورود و اطلاعات حساب داخل خود مرورگر انجام می‌شود و کلید یا رمز عبور در Wisp Trader ذخیره نمی‌شود.", style = MaterialTheme.typography.bodySmall)
-                Button(onClick = ::openChatGpt, modifier = Modifier.fillMaxWidth()) {
-                    Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = null)
-                    Text("  باز کردن ChatGPT با Chrome")
-                }
-                OutlinedButton(onClick = ::openChatGpt, modifier = Modifier.fillMaxWidth()) { Text("جستجو و مرور وب") }
             }
         }
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("وضعیت", style = MaterialTheme.typography.titleMedium)
-                Text(message)
-            }
-        }
-        Text("نکته: موتور کامل Chrome را نمی‌توان داخل Composable جاسازی کرد. Custom Tabs راه استاندارد اندروید برای تجربه مرورگر داخل context اپ است و برای ورود شخص ثالث مناسب‌تر از WebView است.", style = MaterialTheme.typography.bodySmall)
     }
 }
