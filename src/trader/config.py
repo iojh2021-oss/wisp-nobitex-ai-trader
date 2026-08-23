@@ -13,18 +13,25 @@ class Settings:
     nobitex_base_url: str = os.getenv("NOBITEX_BASE_URL", "https://api.nobitex.ir")
     nobitex_ws_url: str = os.getenv("NOBITEX_WS_URL", "wss://wss.nobitex.ir/connection/websocket")
     nobitex_token: str | None = os.getenv("NOBITEX_TOKEN") or None
+    nobitex_testnet_base_url: str = os.getenv("NOBITEX_TESTNET_BASE_URL", "https://testnetapi.nobitex.ir")
+    nobitex_testnet_token: str | None = os.getenv("NOBITEX_TESTNET_TOKEN") or None
     nobitex_websocket_auth_param: str | None = os.getenv("NOBITEX_WEBSOCKET_AUTH_PARAM") or None
     nobitex_market: str = os.getenv("NOBITEX_MARKET", "BTCIRT").upper()
     openai_api_key: str | None = os.getenv("OPENAI_API_KEY") or None
     openai_model: str = os.getenv("OPENAI_MODEL", "gpt-5-mini")
     paper_trading: bool = _bool("PAPER_TRADING", True)
+    testnet_trading_enabled: bool = _bool("TESTNET_TRADING_ENABLED", False)
     live_trading_enabled: bool = _bool("LIVE_TRADING_ENABLED", False)
     max_trade_quote: float = float(os.getenv("MAX_TRADE_QUOTE", "1000000"))
     max_daily_loss_quote: float = float(os.getenv("MAX_DAILY_LOSS_QUOTE", "2000000"))
 
     def validate(self) -> None:
-        if self.live_trading_enabled and self.paper_trading:
-            raise ValueError("LIVE_TRADING_ENABLED cannot be true while PAPER_TRADING is true")
+        if self.live_trading_enabled and (self.paper_trading or self.testnet_trading_enabled):
+            raise ValueError("LIVE_TRADING_ENABLED cannot be combined with paper or testnet trading")
+        if self.testnet_trading_enabled and self.paper_trading:
+            raise ValueError("TESTNET_TRADING_ENABLED cannot be combined with PAPER_TRADING")
+        if self.testnet_trading_enabled and not self.nobitex_testnet_token:
+            raise ValueError("Testnet trading requires NOBITEX_TESTNET_TOKEN")
         if self.live_trading_enabled and not self.nobitex_token:
             raise ValueError("Live trading requires NOBITEX_TOKEN")
         if self.max_trade_quote <= 0 or self.max_daily_loss_quote <= 0:
