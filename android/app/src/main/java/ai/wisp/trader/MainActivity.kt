@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -34,6 +35,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -58,23 +60,12 @@ private fun TraderApp() {
         topBar = { TopAppBar(title = { Text(if (selectedTab == 0) "Wisp Trader" else "ChatGPT Workspace") }) },
         bottomBar = {
             NavigationBar {
-                NavigationBarItem(
-                    selected = selectedTab == 0,
-                    onClick = { selectedTab = 0 },
-                    icon = { Text("📈") },
-                    label = { Text("Trader") }
-                )
-                NavigationBarItem(
-                    selected = selectedTab == 1,
-                    onClick = { selectedTab = 1 },
-                    icon = { Text("💬") },
-                    label = { Text("ChatGPT") }
-                )
+                NavigationBarItem(selected = selectedTab == 0, onClick = { selectedTab = 0 }, icon = { Text("📈") }, label = { Text("Trader") })
+                NavigationBarItem(selected = selectedTab == 1, onClick = { selectedTab = 1 }, icon = { Text("💬") }, label = { Text("ChatGPT") })
             }
         }
     ) { pad ->
-        if (selectedTab == 0) TraderScreen(Modifier.padding(pad))
-        else ChatGptScreen(Modifier.padding(pad))
+        if (selectedTab == 0) TraderScreen(Modifier.padding(pad)) else ChatGptScreen(Modifier.padding(pad))
     }
 }
 
@@ -153,10 +144,7 @@ private fun TraderScreen(modifier: Modifier = Modifier) {
     }
 
     MaterialTheme(colorScheme = androidx.compose.material3.darkColorScheme()) {
-        LazyColumn(
-            modifier = modifier.fillMaxSize().padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
+        LazyColumn(modifier = modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text("AI Trading Control", style = MaterialTheme.typography.headlineSmall)
@@ -168,27 +156,10 @@ private fun TraderScreen(modifier: Modifier = Modifier) {
                 Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text("Connections", style = MaterialTheme.typography.titleLarge)
-                        OutlinedTextField(
-                            value = market,
-                            onValueChange = { market = it.uppercase(Locale.US).filter(Char::isLetterOrDigit) },
-                            modifier = Modifier.fillMaxWidth(), singleLine = true,
-                            label = { Text("Nobitex market") }, supportingText = { Text("Example: BTCIRT or BTCUSDT") }
-                        )
-                        OutlinedTextField(
-                            value = nobitexToken, onValueChange = { nobitexToken = it },
-                            modifier = Modifier.fillMaxWidth(), singleLine = true,
-                            visualTransformation = PasswordVisualTransformation(),
-                            label = { Text("Nobitex API token (optional for public data)") }
-                        )
-                        OutlinedTextField(
-                            value = openAiKey, onValueChange = { openAiKey = it },
-                            modifier = Modifier.fillMaxWidth(), singleLine = true,
-                            visualTransformation = PasswordVisualTransformation(), label = { Text("OpenAI API key") },
-                            supportingText = { Text("Used by the programmatic AI engine; stored with Android Keystore.") }
-                        )
-                        Button(enabled = !busy, onClick = ::loadMarket, modifier = Modifier.fillMaxWidth()) {
-                            Text(if (busy) "Working…" else "Connect to Nobitex")
-                        }
+                        OutlinedTextField(value = market, onValueChange = { market = it.uppercase(Locale.US).filter(Char::isLetterOrDigit) }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("Nobitex market") }, supportingText = { Text("Example: BTCIRT or BTCUSDT") })
+                        OutlinedTextField(value = nobitexToken, onValueChange = { nobitexToken = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, visualTransformation = PasswordVisualTransformation(), label = { Text("Nobitex API token (optional for public data)") })
+                        OutlinedTextField(value = openAiKey, onValueChange = { openAiKey = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, visualTransformation = PasswordVisualTransformation(), label = { Text("OpenAI API key") }, supportingText = { Text("Used by the programmatic AI engine; stored with Android Keystore.") })
+                        Button(enabled = !busy, onClick = ::loadMarket, modifier = Modifier.fillMaxWidth()) { Text(if (busy) "Working…" else "Connect to Nobitex") }
                     }
                 }
             }
@@ -281,7 +252,7 @@ private fun ChatGptScreen(modifier: Modifier = Modifier) {
                 Text("This tab displays ChatGPT inside the app and keeps its web session/cookies in the Android WebView. Sign in with your own account if requested.", style = MaterialTheme.typography.bodySmall)
                 Text("Important: this is the ChatGPT website UI, not an OpenAI API connection. The Trader tab uses the API separately when an API key is configured.", style = MaterialTheme.typography.bodySmall)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = { webView.goBack() }, enabled = webView.canGoBack()) { Text("Back") }
+                    OutlinedButton(onClick = { webView.goBack() }) { Text("Back") }
                     OutlinedButton(onClick = { webView.reload() }) { Text("Reload") }
                 }
             }
