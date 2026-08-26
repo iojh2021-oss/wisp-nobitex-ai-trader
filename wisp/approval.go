@@ -175,6 +175,14 @@ func (g *approvalGate) serve() *http.Server {
 		}
 		writeJSON(w, p)
 	}))
+	mux.HandleFunc("/approve-live", auth(func(w http.ResponseWriter, r *http.Request) {
+		p, err := g.approveLive(r.URL.Query().Get("id"), r.URL.Query().Get("confirm"))
+		if err != nil {
+			writeJSONStatus(w, http.StatusConflict, map[string]any{"error": err.Error(), "proposal": p})
+			return
+		}
+		writeJSON(w, p)
+	}))
 	mux.HandleFunc("/deny", auth(func(w http.ResponseWriter, r *http.Request) {
 		p, err := g.deny(r.URL.Query().Get("id"))
 		if err != nil {
