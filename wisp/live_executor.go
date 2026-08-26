@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -43,6 +45,29 @@ func newLiveExecutor(risk *riskGate) *liveExecutor {
 		apiToken:   os.Getenv("NOBITEX_API_TOKEN"),
 		enabled:    os.Getenv("LIVE_TRADING_ENABLED") == "true",
 	}
+}
+
+// newLiveExecutorFromEnv builds a live executor with its own dedicated risk
+// gate, configured from MAX_TRADE_QUOTE_LIVE / MAX_DAILY_LOSS_LIVE. This is
+// intentionally separate from the paper-trading risk gate so tightening or
+// loosening one never silently affects the other.
+func newLiveExecutorFromEnv() *liveExecutor {
+	maxTrade := envFloat("MAX_TRADE_QUOTE_LIVE", 0)
+	maxDailyLoss := envFloat("MAX_DAILY_LOSS_LIVE", 0)
+	risk := &riskGate{maxTradeQuote: maxTrade, maxDailyLossQuote: maxDailyLoss}
+	return newLiveExecutor(risk)
+}
+
+func envFloat(key string, fallback float64) float64 {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return fallback
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		return fallback
+	}
+	return f
 }
 
 func (e *liveExecutor) execute(p TradeProposal, confirmPhrase string) (LiveExecution, error) {
