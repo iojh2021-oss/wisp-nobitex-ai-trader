@@ -191,6 +191,7 @@ private fun TraderDashboard(modifier: Modifier = Modifier) {
             .build()
     }
     val engine = remember { LocalTradingEngine(client) }
+    val liveEngine = remember { LiveTradingExecutor(client) }
     val scope = rememberCoroutineScope()
     var market by remember { mutableStateOf("BTCIRT") }
     var openAiKey by remember { mutableStateOf(secrets.readOpenAiKey()) }
@@ -201,6 +202,9 @@ private fun TraderDashboard(modifier: Modifier = Modifier) {
     var status by remember { mutableStateOf("Ready") }
     var busy by remember { mutableStateOf(false) }
     var autoRefresh by remember { mutableStateOf(false) }
+    var showLiveConfirm by remember { mutableStateOf(false) }
+    var liveConfirmText by remember { mutableStateOf("") }
+    var liveExecutions by remember { mutableStateOf(emptyList<LiveExecution>()) }
 
     fun save() {
         secrets.saveOpenAiKey(openAiKey.trim())
@@ -241,6 +245,25 @@ private fun TraderDashboard(modifier: Modifier = Modifier) {
             runCatching { withContext(Dispatchers.Default) { engine.approvePaper(p) } }
                 .onSuccess { executions = executions + it; proposal = p.copy(status = "approved_paper"); status = "Paper execution completed" }
                 .onFailure { status = "Risk Gate • ${it.message ?: "blocked"}" }
+            busy = false
+        }
+    }
+
+    fun liveExecute() {
+        val p = proposal ?: return
+        if (busy) return
+        busy = true
+        save()
+        scope.launch {
+            runCatching { withContext(Dispatchers.IO) { liveEngine.approveLive(p, nobitexToken, liveConfirmText) } }
+                .onSuccess {
+                    liveExecutions = liveExecutions + it
+                    proposal = p.copy(status = "approved_live")
+                    status = "LIVE order sent • ${it.nobitexOrderId}"
+                    showLiveConfirm = false
+                    liveConfirmText = ""
+                }
+                .onFailure { status = "Live order failed • ${it.message ?: "unknown"}" }
             busy = false
         }
     }
@@ -336,6 +359,29 @@ private fun TraderDashboard(modifier: Modifier = Modifier) {
                     if (p.status == "pending") {
                         Button(onClick = ::paperExecute, enabled = !busy, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = WispWhite, contentColor = Color.Black)) { Text("APPROVE PAPER EXECUTION") }
                         OutlinedButton(onClick = { proposal = p.copy(status = "denied") }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("REJECT") }
+                        OutlinedButton(
+                            onClick = { showLiveConfirm = !showLiveConfirm },
+                            enabled = !busy,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = WispRed)
+                        ) { Text(if (showLiveConfirm) "CANCEL LIVE TRADING" else "LIVE TRADING (REAL MONEY)") }
+                        if (showLiveConfirm) {
+                            Text("This sends a REAL order to Nobitex using real funds. Type exactly:", color = WispRed, fontSize = 11.sp)
+                            Text("CONFIRM LIVE ${p.market}", color = WispText, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            OutlinedTextField(
+                                value = liveConfirmText,
+                                onValueChange = { liveConfirmText = it },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true,
+                                label = { Text("Confirmation phrase") }
+                            )
+                            Button(
+                                onClick = ::liveExecute,
+                                enabled = !busy && liveConfirmText == "CONFIRM LIVE ${p.market}",
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = ButtonDefaults.buttonColors(containerColor = WispRed, contentColor = Color.Black)
+                            ) { Text("SEND REAL ORDER") }
+                        }
                     } else {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Outlined.CheckCircle, null, tint = WispGreen)
@@ -350,10 +396,14 @@ private fun TraderDashboard(modifier: Modifier = Modifier) {
             SectionCard("ACTIVITY") {
                 if (executions.isEmpty()) Text("No paper executions yet.", color = WispMuted)
                 else executions.asReversed().take(8).forEach { x -> Text("${x.action.uppercase()}  ${x.market}  •  ${"%.2f".format(Locale.US, x.quoteAmount)}  •  ${x.reference}", fontSize = 12.sp) }
+                if (liveExecutions.isNotEmpty()) {
+                    Text("LIVE ORDERS", color = WispRed, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    liveExecutions.asReversed().take(8).forEach { x -> Text("${x.action.uppercase()}  ${x.market}  •  ${"%.2f".format(Locale.US, x.quoteAmount)}  •  ${x.nobitexOrderId}", fontSize = 12.sp, color = WispRed) }
+                }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Outlined.Lock, null, tint = WispMuted, modifier = Modifier.size(15.dp))
                     Spacer(Modifier.width(7.dp))
-                    Text("Standalone • no Termux • no localhost • paper-only execution", color = WispMuted, fontSize = 10.sp)
+                    Text("Standalone • no Termux • no localhost", color = WispMuted, fontSize = 10.sp)
                 }
             }
         }
