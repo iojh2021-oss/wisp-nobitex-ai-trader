@@ -95,7 +95,11 @@ private fun TraderApp() {
             topBar = {
                 TopAppBar(
                     title = {
-                        Text(if (selectedTab == 0) "Wisp Trader" else "ChatGPT Workspace")
+                        Text(when (selectedTab) {
+                            0 -> "Wisp Trader"
+                            1 -> "ChatGPT Workspace"
+                            else -> "Nobitex Market"
+                        })
                     }
                 )
             },
@@ -113,13 +117,19 @@ private fun TraderApp() {
                         icon = { Icon(Icons.Outlined.ChatBubbleOutline, "ChatGPT") },
                         label = { Text("ChatGPT") }
                     )
+                    NavigationBarItem(
+                        selected = selectedTab == 2,
+                        onClick = { selectedTab = 2 },
+                        icon = { Icon(Icons.Outlined.Refresh, "Market") },
+                        label = { Text("Market") }
+                    )
                 }
             }
         ) { padding ->
-            if (selectedTab == 0) {
-                TraderScreen(Modifier.padding(padding))
-            } else {
-                ChatGptBrowserScreen(Modifier.padding(padding))
+            when (selectedTab) {
+                0 -> TraderScreen(Modifier.padding(padding))
+                1 -> ChatGptBrowserScreen(Modifier.padding(padding))
+                else -> NobitexMarketTab(Modifier.padding(padding))
             }
         }
     }
