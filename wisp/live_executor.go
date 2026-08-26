@@ -63,10 +63,7 @@ func (e *liveExecutor) execute(p TradeProposal, confirmPhrase string) (LiveExecu
 		return LiveExecution{}, fmt.Errorf("cannot execute action %q live", p.Action)
 	}
 
-	src, dst, err := splitMarket(p.Market)
-	if err != nil {
-		return LiveExecution{}, err
-	}
+	src, dst := splitMarket(p.Market)
 
 	reqBody, _ := json.Marshal(map[string]string{
 		"type":          p.Action,
@@ -131,11 +128,3 @@ func (e *liveExecutor) list() []LiveExecution {
 	return out
 }
 
-func splitMarket(market string) (src, dst string, err error) {
-	for _, quote := range []string{"USDT", "IRT", "RLS"} {
-		if len(market) > len(quote) && market[len(market)-len(quote):] == quote {
-			return market[:len(market)-len(quote)], quote, nil
-		}
-	}
-	return "", "", fmt.Errorf("could not split market %q into src/dst currency", market)
-}
