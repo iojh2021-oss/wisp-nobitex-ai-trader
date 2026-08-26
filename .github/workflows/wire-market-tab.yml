@@ -1,0 +1,63 @@
+name: Wire Nobitex Market Tab
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'android/app/src/main/java/ai/wisp/trader/NobitexMarketTab.kt'
+      - '.github/workflows/wire-market-tab.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  wire-and-verify:
+    if: ${{ !contains(github.event.head_commit.message, 'wire Nobitex Market Tab') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Wire the third tab into MainActivity
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('android/app/src/main/java/ai/wisp/trader/MainActivity.kt')
+          s = p.read_text()
+
+          old = '''title = {\n                        Text(if (selectedTab == 0) "Wisp Trader" else "ChatGPT Workspace")\n                    }'''
+          new = '''title = {\n                        Text(when (selectedTab) {\n                            0 -> "Wisp Trader"\n                            1 -> "ChatGPT Workspace"\n                            else -> "Nobitex Market"\n                        })\n                    }'''
+          if old not in s:
+              raise SystemExit('MainActivity title block not found')
+          s = s.replace(old, new, 1)
+
+          old = '''                    NavigationBarItem(\n                        selected = selectedTab == 1,\n                        onClick = { selectedTab = 1 },\n                        icon = { Icon(Icons.Outlined.ChatBubbleOutline, "ChatGPT") },\n                        label = { Text("ChatGPT") }\n                    )'''
+          new = old + '''\n                    NavigationBarItem(\n                        selected = selectedTab == 2,\n                        onClick = { selectedTab = 2 },\n                        icon = { Icon(Icons.Outlined.Refresh, "Market") },\n                        label = { Text("Market") }\n                    )'''
+          if old not in s:
+              raise SystemExit('MainActivity navigation block not found')
+          s = s.replace(old, new, 1)
+
+          old = '''            if (selectedTab == 0) {\n                TraderScreen(Modifier.padding(padding))\n            } else {\n                ChatGptBrowserScreen(Modifier.padding(padding))\n            }'''
+          new = '''            when (selectedTab) {\n                0 -> TraderScreen(Modifier.padding(padding))\n                1 -> ChatGptBrowserScreen(Modifier.padding(padding))\n                else -> NobitexMarketTab(Modifier.padding(padding))\n            }'''
+          if old not in s:
+              raise SystemExit('MainActivity content block not found')
+          s = s.replace(old, new, 1)
+
+          p.write_text(s)
+          PY
+
+      - name: Verify source wiring
+        run: |
+          grep -q 'NobitexMarketTab' android/app/src/main/java/ai/wisp/trader/MainActivity.kt
+          test -s android/app/src/main/java/ai/wisp/trader/NobitexMarketTab.kt
+
+      - name: Commit wiring
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add android/app/src/main/java/ai/wisp/trader/MainActivity.kt
+          git diff --cached --quiet && exit 0
+          git commit -m 'feat(android): wire Nobitex Market Tab'
+          git push origin HEAD:main
