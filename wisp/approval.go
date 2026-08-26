@@ -33,13 +33,20 @@ type approvalGate struct {
 	ttl        time.Duration
 	executor   *paperExecutor
 	executions map[string]PaperExecution
+	live       *liveExecutor
 }
 
 func newApprovalGate(ttl time.Duration) *approvalGate {
 	if ttl <= 0 {
 		ttl = 2 * time.Minute
 	}
-	return &approvalGate{pending: make(map[string]TradeProposal), ttl: ttl, executor: newPaperExecutor(), executions: make(map[string]PaperExecution)}
+	return &approvalGate{
+		pending:    make(map[string]TradeProposal),
+		ttl:        ttl,
+		executor:   newPaperExecutor(),
+		executions: make(map[string]PaperExecution),
+		live:       newLiveExecutorFromEnv(),
+	}
 }
 
 func newProposalID() (string, error) {
@@ -97,6 +104,43 @@ func (g *approvalGate) approve(id string) (TradeProposal, error) {
 	p.Status = "approved"
 	g.pending[id] = p
 	g.executions[id] = x
+	return p, nil
+}
+
+func (g *approvalGate) approveLive(id string, confirmPhrase string) (TradeProposal, error) {
+	g.mu.Lock()
+	p, ok := g.pending[id]
+	if !ok {
+		g.mu.Unlock()
+		return TradeProposal{}, fmt.Errorf("proposal not found")
+	}
+	if !time.Now().UTC().Before(p.ExpiresAt) {
+		p.Status = "expired"
+		g.pending[id] = p
+		g.mu.Unlock()
+		return p, fmt.Errorf("proposal expired")
+	}
+	if p.Status != "pending" {
+		g.mu.Unlock()
+		return p, fmt.Errorf("proposal status is %s", p.Status)
+	}
+	if g.live == nil {
+		g.mu.Unlock()
+		return p, fmt.Errorf("live executor is not configured")
+	}
+	g.mu.Unlock()
+
+	x, err := g.live.execute(p, confirmPhrase)
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if err != nil {
+		p.Status = "execution_failed"
+		g.pending[id] = p
+		return p, fmt.Errorf("live execution: %w", err)
+	}
+	p.Status = "approved_live"
+	g.pending[id] = p
+	_ = x
 	return p, nil
 }
 
