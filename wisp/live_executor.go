@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 )
@@ -58,17 +56,6 @@ func newLiveExecutorFromEnv() *liveExecutor {
 	return newLiveExecutor(risk)
 }
 
-func envFloat(key string, fallback float64) float64 {
-	v := strings.TrimSpace(os.Getenv(key))
-	if v == "" {
-		return fallback
-	}
-	f, err := strconv.ParseFloat(v, 64)
-	if err != nil {
-		return fallback
-	}
-	return f
-}
 
 func (e *liveExecutor) execute(p TradeProposal, confirmPhrase string) (LiveExecution, error) {
 	if !e.enabled {
