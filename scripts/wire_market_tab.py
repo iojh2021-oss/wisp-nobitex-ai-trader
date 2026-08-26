@@ -1,7 +1,13 @@
 from pathlib import Path
+import sys
 
 p = Path("android/app/src/main/java/ai/wisp/trader/MainActivity.kt")
 s = p.read_text()
+
+# Already wired (either manually or by a previous run) — nothing to do.
+if "NobitexMarketTab(" in s:
+    print("MainActivity already wires NobitexMarketTab — nothing to do.")
+    sys.exit(0)
 
 old_title = '''title = {
                         Text(if (selectedTab == 0) "Wisp Trader" else "ChatGPT Workspace")
