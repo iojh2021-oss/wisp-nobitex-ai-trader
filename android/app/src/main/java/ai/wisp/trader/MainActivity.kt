@@ -411,18 +411,17 @@ private fun TraderDashboard(modifier: Modifier = Modifier) {
     }
 }
 
-@SuppressLint("SetJavaScriptEnabled")
 @Composable
 private fun ChatGptWorkspace(modifier: Modifier = Modifier) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    var webView by remember { mutableStateOf<WebView?>(null) }
     var address by remember { mutableStateOf(CHATGPT_URL) }
-    var loading by remember { mutableStateOf(true) }
-    var progress by remember { mutableIntStateOf(0) }
-    var errorText by remember { mutableStateOf<String?>(null) }
-    var pageTitle by remember { mutableStateOf("ChatGPT") }
-    var canGoBack by remember { mutableStateOf(false) }
-    var canGoForward by remember { mutableStateOf(false) }
+
+    fun openInCustomTab(url: String) {
+        val builder = androidx.browser.customtabs.CustomTabsIntent.Builder()
+        builder.setShowTitle(true)
+        val customTabsIntent = builder.build()
+        runCatching { customTabsIntent.launchUrl(context, Uri.parse(url)) }
+    }
 
     fun normalizeInput(input: String): String {
         val value = input.trim()
@@ -432,137 +431,40 @@ private fun ChatGptWorkspace(modifier: Modifier = Modifier) {
         return if (value.contains(" ") || !value.contains(".")) "https://www.google.com/search?q=$encoded" else "https://$value"
     }
 
-    fun navigate(input: String) {
-        val url = normalizeInput(input)
-        address = url
-        errorText = null
-        webView?.loadUrl(url)
-    }
-
-    BackHandler(enabled = webView?.canGoBack() == true) { webView?.goBack() }
-
-    DisposableEffect(Unit) {
-        onDispose {
-            webView?.apply {
-                stopLoading()
-                loadUrl("about:blank")
-                clearHistory()
-                removeAllViews()
-                destroy()
-            }
-            webView = null
-        }
-    }
-
-    Column(modifier.fillMaxSize()) {
-        SurfaceBar {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = { webView?.goBack() }, enabled = canGoBack) { Icon(Icons.Outlined.ArrowBack, "Back") }
-                IconButton(onClick = { webView?.goForward() }, enabled = canGoForward) { Icon(Icons.Outlined.ArrowForward, "Forward") }
-                IconButton(onClick = { webView?.reload() }) { Icon(Icons.Outlined.Refresh, "Reload") }
-                OutlinedTextField(
-                    value = address,
-                    onValueChange = { address = it },
-                    modifier = Modifier.weight(1f),
-                    singleLine = true,
-                    label = { Text("Search or address") },
-                    leadingIcon = { Icon(Icons.Outlined.Search, null) },
-                    trailingIcon = { IconButton(onClick = { navigate(address) }) { Icon(Icons.Outlined.OpenInBrowser, "Go") } }
-                )
-            }
-            if (loading) {
-                Text("Loading ${progress}% • $pageTitle", color = WispMuted, fontSize = 10.sp, modifier = Modifier.padding(start = 8.dp, top = 4.dp))
-            } else {
-                Text("READY • signed-in session stays inside this app", color = WispGreen, fontSize = 10.sp, modifier = Modifier.padding(start = 8.dp, top = 4.dp))
+    Column(modifier.fillMaxSize().background(WispBackground).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        SectionCard("CHATGPT WORKSPACE") {
+            Text(
+                "ChatGPT blocks embedded in-app browsers for security. This opens ChatGPT in a real Chrome tab with your normal signed-in session, then returns you here.",
+                color = WispMuted,
+                fontSize = 12.sp
+            )
+            Button(
+                onClick = { openInCustomTab(CHATGPT_URL) },
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = WispWhite, contentColor = Color.Black)
+            ) {
+                Icon(Icons.Outlined.OpenInBrowser, null)
+                Spacer(Modifier.width(8.dp))
+                Text("OPEN CHATGPT")
             }
         }
-
-        errorText?.let { message ->
-            SectionCard("WEBVIEW ERROR") {
-                Text(message, color = WispRed, fontSize = 12.sp)
-                Button(onClick = { navigate(CHATGPT_URL) }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = WispWhite, contentColor = Color.Black)) { Text("RETRY CHATGPT") }
-                OutlinedButton(onClick = {
-                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(CHATGPT_URL)))
-                }, modifier = Modifier.fillMaxWidth()) { Text("OPEN IN SYSTEM BROWSER") }
-            }
+        SectionCard("SEARCH OR OPEN A LINK") {
+            OutlinedTextField(
+                value = address,
+                onValueChange = { address = it },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                label = { Text("Search or address") },
+                leadingIcon = { Icon(Icons.Outlined.Search, null) }
+            )
+            Button(
+                onClick = { openInCustomTab(normalizeInput(address)) },
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = WispPurple, contentColor = WispText)
+            ) { Text("OPEN") }
         }
-
-        AndroidView(
-            modifier = Modifier.fillMaxSize(),
-            factory = { ctx ->
-                CookieManager.getInstance().setAcceptCookie(true)
-                WebView(ctx).apply {
-                    webView = this
-                    settings.apply {
-                        javaScriptEnabled = true
-                        domStorageEnabled = true
-                        databaseEnabled = true
-                        loadsImagesAutomatically = true
-                        javaScriptCanOpenWindowsAutomatically = true
-                        setSupportMultipleWindows(false)
-                        builtInZoomControls = false
-                        displayZoomControls = false
-                        useWideViewPort = true
-                        loadWithOverviewMode = false
-                        mediaPlaybackRequiresUserGesture = false
-                        cacheMode = WebSettings.LOAD_DEFAULT
-                        userAgentString = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Mobile Safari/537.36"
-                    }
-                    CookieManager.getInstance().setAcceptCookie(true)
-                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
-                        CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
-                    }
-                    webViewClient = object : WebViewClient() {
-                        override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean = false
-
-                        override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
-                            loading = true
-                            progress = 0
-                            errorText = null
-                            if (!url.isNullOrBlank()) address = url
-                            canGoBack = view?.canGoBack() == true
-                            canGoForward = view?.canGoForward() == true
-                        }
-
-                        override fun onPageFinished(view: WebView?, url: String?) {
-                            loading = false
-                            progress = 100
-                            if (!url.isNullOrBlank()) address = url
-                            pageTitle = view?.title?.takeIf { it.isNotBlank() } ?: "ChatGPT"
-                            canGoBack = view?.canGoBack() == true
-                            canGoForward = view?.canGoForward() == true
-                            CookieManager.getInstance().flush()
-                        }
-
-                        override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
-                            if (request?.isForMainFrame == true) {
-                                loading = false
-                                errorText = error?.description?.toString() ?: "Unable to load this page"
-                            }
-                        }
-                    }
-                    webChromeClient = object : WebChromeClient() {
-                        override fun onProgressChanged(view: WebView?, newProgress: Int) {
-                            progress = newProgress
-                            canGoBack = view?.canGoBack() == true
-                            canGoForward = view?.canGoForward() == true
-                        }
-                    }
-                    setDownloadListener { url, _, _, _, _ ->
-                        runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
-                    }
-                    loadUrl(CHATGPT_URL)
-                }
-            },
-            update = { view ->
-                webView = view
-                canGoBack = view.canGoBack()
-                canGoForward = view.canGoForward()
-            }
-        )
     }
 }
-
 @Composable
 private fun SurfaceBar(content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) {
     Column(Modifier.fillMaxWidth().background(WispSurface).padding(8.dp), content = content)
