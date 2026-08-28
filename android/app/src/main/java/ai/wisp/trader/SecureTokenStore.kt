@@ -69,6 +69,14 @@ class SecureTokenStore(context: Context) {
     fun readNobitexToken(): String = readValue("nobitex_api_token")
     fun clearNobitexToken() = prefs.edit().remove("nobitex_api_token").apply()
 
+    fun saveNobitexApiKey(value: String) = saveValue("nobitex_api_key", value)
+    fun readNobitexApiKey(): String = readValue("nobitex_api_key")
+    fun clearNobitexApiKey() = prefs.edit().remove("nobitex_api_key").apply()
+
+    fun saveNobitexPrivateKey(value: String) = saveValue("nobitex_private_key", value)
+    fun readNobitexPrivateKey(): String = readValue("nobitex_private_key")
+    fun clearNobitexPrivateKey() = prefs.edit().remove("nobitex_private_key").apply()
+
     // Kept for compatibility with older APK builds.
     fun save(token: String) = saveOpenAiKey(token)
     fun read(): String = readOpenAiKey()

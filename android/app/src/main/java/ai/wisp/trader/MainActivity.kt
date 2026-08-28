@@ -196,6 +196,8 @@ private fun TraderDashboard(modifier: Modifier = Modifier) {
     var market by remember { mutableStateOf("BTCIRT") }
     var openAiKey by remember { mutableStateOf(secrets.readOpenAiKey()) }
     var nobitexToken by remember { mutableStateOf(secrets.readNobitexToken()) }
+    var nobitexApiKey by remember { mutableStateOf(secrets.readNobitexApiKey()) }
+    var nobitexPrivateKey by remember { mutableStateOf(secrets.readNobitexPrivateKey()) }
     var snapshot by remember { mutableStateOf<LocalTradingEngine.MarketSnapshot?>(null) }
     var proposal by remember { mutableStateOf<LocalTradingEngine.Proposal?>(null) }
     var executions by remember { mutableStateOf(emptyList<LocalTradingEngine.PaperExecution>()) }
@@ -209,6 +211,8 @@ private fun TraderDashboard(modifier: Modifier = Modifier) {
     fun save() {
         secrets.saveOpenAiKey(openAiKey.trim())
         secrets.saveNobitexToken(nobitexToken.trim())
+        secrets.saveNobitexApiKey(nobitexApiKey.trim())
+        secrets.saveNobitexPrivateKey(nobitexPrivateKey.trim())
     }
 
     fun refresh() {
@@ -255,11 +259,11 @@ private fun TraderDashboard(modifier: Modifier = Modifier) {
         busy = true
         save()
         scope.launch {
-            runCatching { withContext(Dispatchers.IO) { liveEngine.approveLive(p, nobitexToken, liveConfirmText) } }
+            runCatching { withContext(Dispatchers.IO) { liveEngine.approveLive(p, nobitexApiKey, nobitexPrivateKey, nobitexToken, liveConfirmText) } }
                 .onSuccess {
                     liveExecutions = liveExecutions + it
                     proposal = p.copy(status = "approved_live")
-                    status = "LIVE order sent • ${it.nobitexOrderId}"
+                    status = "LIVE order sent • ${it.nobitexOrderId} (${it.authMode})"
                     showLiveConfirm = false
                     liveConfirmText = ""
                 }
@@ -302,6 +306,8 @@ private fun TraderDashboard(modifier: Modifier = Modifier) {
             SectionCard("CONNECTION") {
                 OutlinedTextField(market, { market = it.uppercase(Locale.US).filter(Char::isLetterOrDigit) }, Modifier.fillMaxWidth(), singleLine = true, label = { Text("Nobitex market") })
                 OutlinedTextField(nobitexToken, { nobitexToken = it }, Modifier.fillMaxWidth(), singleLine = true, visualTransformation = PasswordVisualTransformation(), label = { Text("Nobitex API token") }, supportingText = { Text("Optional for public market data") })
+                OutlinedTextField(nobitexApiKey, { nobitexApiKey = it }, Modifier.fillMaxWidth(), singleLine = true, label = { Text("Nobitex API Key (new, recommended)") }, supportingText = { Text("Public key from Nobitex \u2192 API Key settings") })
+                OutlinedTextField(nobitexPrivateKey, { nobitexPrivateKey = it }, Modifier.fillMaxWidth(), singleLine = true, visualTransformation = PasswordVisualTransformation(), label = { Text("Nobitex Private Key (Ed25519, base64)") }, supportingText = { Text("Used only to sign live orders on this device") })
                 OutlinedTextField(openAiKey, { openAiKey = it }, Modifier.fillMaxWidth(), singleLine = true, visualTransformation = PasswordVisualTransformation(), label = { Text("OpenAI API key") }, supportingText = { Text("Stored locally with Android Keystore") })
                 Button(onClick = ::refresh, enabled = !busy, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = WispWhite, contentColor = Color.Black)) {
                     Icon(Icons.Outlined.Refresh, null)
