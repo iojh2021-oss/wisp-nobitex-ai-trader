@@ -199,6 +199,8 @@ private fun TraderDashboard(modifier: Modifier = Modifier) {
     var nobitexApiKey by remember { mutableStateOf(secrets.readNobitexApiKey()) }
     var nobitexPrivateKey by remember { mutableStateOf(secrets.readNobitexPrivateKey()) }
     var coinStatsApiKey by remember { mutableStateOf(secrets.readCoinStatsKey()) }
+    var opportunities by remember { mutableStateOf(emptyList<LocalTradingEngine.Opportunity>()) }
+    var scanningOpportunities by remember { mutableStateOf(false) }
     var snapshot by remember { mutableStateOf<LocalTradingEngine.MarketSnapshot?>(null) }
     var proposal by remember { mutableStateOf<LocalTradingEngine.Proposal?>(null) }
     var executions by remember { mutableStateOf(emptyList<LocalTradingEngine.PaperExecution>()) }
@@ -240,6 +242,19 @@ private fun TraderDashboard(modifier: Modifier = Modifier) {
                 .onSuccess { proposal = it; status = "AI analysis complete • Risk Gate applied" }
                 .onFailure { status = "AI error • ${it.message ?: "unknown"}" }
             busy = false
+        }
+    }
+
+    fun scanOpportunities() {
+        if (openAiKey.isBlank()) { status = "OpenAI API key is required for the scanner"; return }
+        if (scanningOpportunities) return
+        scanningOpportunities = true
+        save()
+        scope.launch {
+            runCatching { withContext(Dispatchers.IO) { engine.scanOpportunities(openAiKey, coinStatsApiKey) } }
+                .onSuccess { opportunities = it; status = "Scan complete • ${it.size} ranked opportunities" }
+                .onFailure { status = "Scan error • ${it.message ?: "unknown"}" }
+            scanningOpportunities = false
         }
     }
 
@@ -324,6 +339,31 @@ private fun TraderDashboard(modifier: Modifier = Modifier) {
                     Icon(Icons.Outlined.Security, null, tint = WispGreen, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(7.dp))
                     Text(status, color = WispMuted, fontSize = 12.sp)
+                }
+            }
+        }
+        item {
+            SectionCard("OPPORTUNITY SCANNER") {
+                Text("Scans the top 20 Nobitex markets by volume, combines them with CoinStats global market data + news, and asks the AI to rank the best opportunities with suggested take-profit / stop-loss.", color = WispMuted, fontSize = 12.sp)
+                Button(onClick = ::scanOpportunities, enabled = !scanningOpportunities, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = WispPurple, contentColor = WispText)) {
+                    Icon(Icons.Outlined.AutoAwesome, null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(if (scanningOpportunities) "SCANNING…" else "SCAN TOP 20 OPPORTUNITIES")
+                }
+                opportunities.forEach { opp ->
+                    Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("${opp.market} • ${opp.action.uppercase(Locale.US)}", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            Text("${(opp.confidence * 100).toInt()}%", color = WispMuted, fontSize = 12.sp)
+                        }
+                        Text(opp.reason, color = WispMuted, fontSize = 11.sp)
+                        if (opp.takeProfit != null || opp.stopLoss != null) {
+                            Text("TP: ${opp.takeProfit?.let { "%.2f".format(Locale.US, it) } ?: "—"}  •  SL: ${opp.stopLoss?.let { "%.2f".format(Locale.US, it) } ?: "—"}  •  ${opp.timeframeHint}", color = WispMuted, fontSize = 11.sp)
+                        }
+                        OutlinedButton(onClick = { market = opp.market; status = "Selected ${opp.market} from scan — refresh to load it" }, modifier = Modifier.fillMaxWidth()) {
+                            Text("USE THIS MARKET")
+                        }
+                    }
                 }
             }
         }
