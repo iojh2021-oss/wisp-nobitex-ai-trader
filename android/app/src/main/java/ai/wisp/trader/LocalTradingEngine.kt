@@ -169,6 +169,108 @@ recent_trades=${snapshot.recentTrades}
         )
     }
 
+    data class Opportunity(
+        val market: String,
+        val action: String,
+        val confidence: Double,
+        val reason: String,
+        val takeProfit: Double?,
+        val stopLoss: Double?,
+        val timeframeHint: String,
+    )
+
+    /**
+     * Scans the top N Nobitex markets by traded volume, enriches them with
+     * CoinStats global market data + news (if a key is supplied), and asks
+     * the AI to rank the best opportunities with suggested take-profit /
+     * stop-loss levels. This does NOT place any order by itself — the
+     * result still has to go through analyze()/approvePaper()/approveLive
+     * for the chosen market like any other proposal.
+     */
+    fun scanOpportunities(openAiKey: String, coinStatsApiKey: String, topN: Int = 20): List<Opportunity> {
+        require(openAiKey.isNotBlank()) { "OpenAI API key is required" }
+
+        val nobitexRepo = NobitexMarketDataRepository(client)
+        val candidates = nobitexRepo.fetchAllStats()
+            .filter { it.volumeDst != null && it.lastPrice != null }
+            .sortedByDescending { it.volumeDst }
+            .take(topN)
+
+        var coins = emptyList<CoinStatsRepository.CoinMarket>()
+        var news = emptyList<CoinStatsRepository.NewsItem>()
+        if (coinStatsApiKey.isNotBlank()) {
+            val coinStats = CoinStatsRepository(client)
+            coins = runCatching { coinStats.fetchTopCoins(coinStatsApiKey, limit = 100) }.getOrDefault(emptyList())
+            news = runCatching { coinStats.fetchNews(coinStatsApiKey, limit = 20) }.getOrDefault(emptyList())
+        }
+
+        val rows = candidates.joinToString("\n") { s ->
+            val coin = coins.firstOrNull { it.symbol.equals(s.baseSymbol, ignoreCase = true) }
+            val headlines = news.filter { it.title.contains(s.baseSymbol, ignoreCase = true) }.take(2)
+            buildString {
+                append("market=${s.market} last=${s.lastPrice} dayChangePct=${s.dayChangePercent} volumeQuote=${s.volumeDst}")
+                if (coin != null) append(" globalRank=${coin.rank} cap=${coin.marketCap} chg1h=${coin.priceChange1h} chg1d=${coin.priceChange1d} chg1w=${coin.priceChange1w}")
+                if (headlines.isNotEmpty()) append(" news=" + headlines.joinToString(" | ") { it.title })
+            }
+        }
+
+        val prompt = """
+You are a cryptocurrency opportunity screener for a paper-trading assistant.
+Below is a table of Nobitex market candidates with technical, global market, and news context.
+For EACH candidate decide action (buy/sell/hold) and confidence (0-1), then RANK all candidates
+and return only the top 5 by opportunity quality, best first.
+
+Rules:
+- Prefer candidates where global market context (rank/cap/change) and Nobitex technical data AGREE.
+  If evidence conflicts or is thin, lower confidence or use hold.
+- News headlines are directional hints only, never guarantees.
+- take_profit and stop_loss must be absolute price levels in the market's own quote currency,
+  consistent with 'last'. Use null for both if action is hold.
+- timeframe_hint is a short human string like "a few hours" or "1-2 days" — an estimate, not a promise.
+- Never claim guaranteed profit; this is probabilistic analysis, not certainty.
+
+Return JSON only, an array of up to 5 objects:
+[{"market":"BTCUSDT","action":"buy|sell|hold","confidence":0.0,"reason":"...","take_profit":number|null,"stop_loss":number|null,"timeframe_hint":"..."}]
+
+CANDIDATES
+$rows
+""".trimIndent()
+
+        val body = JSONObject().apply {
+            put("model", OPENAI_MODEL)
+            put("input", prompt)
+        }.toString().toRequestBody("application/json".toMediaType())
+
+        val request = Request.Builder()
+            .url(OPENAI_URL)
+            .header("Authorization", "Bearer ${openAiKey.trim()}")
+            .header("Content-Type", "application/json")
+            .post(body)
+            .build()
+
+        val responseText = client.newCall(request).execute().use { response ->
+            val text = response.body?.string().orEmpty()
+            if (!response.isSuccessful) error("OpenAI HTTP ${response.code}: ${text.take(300)}")
+            text
+        }
+        val outputText = extractOutputText(JSONObject(responseText))
+        val arr = org.json.JSONArray(cleanJson(outputText))
+        val result = ArrayList<Opportunity>()
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            result += Opportunity(
+                market = o.optString("market"),
+                action = o.optString("action", "hold").lowercase(Locale.US),
+                confidence = o.optDouble("confidence", 0.0).coerceIn(0.0, 1.0),
+                reason = o.optString("reason"),
+                takeProfit = if (o.isNull("take_profit")) null else o.optDouble("take_profit"),
+                stopLoss = if (o.isNull("stop_loss")) null else o.optDouble("stop_loss"),
+                timeframeHint = o.optString("timeframe_hint"),
+            )
+        }
+        return result
+    }
+
     fun approvePaper(proposal: Proposal): PaperExecution {
         require(proposal.status == "pending") { "Proposal is not pending approval" }
         require(proposal.confidence >= MIN_CONFIDENCE) { "Risk gate rejected low-confidence proposal" }

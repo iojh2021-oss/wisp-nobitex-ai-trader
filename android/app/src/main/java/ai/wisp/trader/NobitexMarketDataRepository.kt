@@ -70,6 +70,42 @@ class NobitexMarketDataRepository(
         val fetchedAtMs: Long
     )
 
+    data class RawMarketStat(
+        val market: String,
+        val baseSymbol: String,
+        val quote: String,
+        val lastPrice: Double?,
+        val dayChangePercent: Double?,
+        val volumeDst: Double?,
+    )
+
+    /** Fetches stats for ALL Nobitex pairs in a single public request, used for screening. */
+    fun fetchAllStats(): List<RawMarketStat> {
+        val text = get("/market/stats")
+        val root = JSONObject(text)
+        val stats = root.optJSONObject("stats") ?: return emptyList()
+        val result = ArrayList<RawMarketStat>()
+        val keys = stats.keys()
+        while (keys.hasNext()) {
+            val key = keys.next()
+            val obj = stats.optJSONObject(key) ?: continue
+            val parts = key.split("-")
+            if (parts.size != 2) continue
+            val base = parts[0].uppercase(Locale.US)
+            val quoteRaw = parts[1].lowercase(Locale.US)
+            val quote = if (quoteRaw == "rls") "IRT" else quoteRaw.uppercase(Locale.US)
+            result += RawMarketStat(
+                market = base + quote,
+                baseSymbol = base,
+                quote = quote,
+                lastPrice = number(obj, "latest", "lastTradePrice", "last"),
+                dayChangePercent = number(obj, "dayChange"),
+                volumeDst = number(obj, "volumeDst", "volumeSrc"),
+            )
+        }
+        return result
+    }
+
     fun fetch(symbolInput: String, resolution: String = "15", candleCount: Int = 100): MarketData {
         val symbol = normalizeSymbol(symbolInput)
         val src = symbol.removeSuffix("IRT").removeSuffix("USDT").lowercase(Locale.US)
