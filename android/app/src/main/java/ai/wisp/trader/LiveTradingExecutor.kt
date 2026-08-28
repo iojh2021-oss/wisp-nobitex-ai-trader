@@ -46,7 +46,7 @@ class LiveTradingExecutor(private val client: OkHttpClient) {
         }.toString().toRequestBody("application/json".toMediaType())
 
         val request = Request.Builder()
-            .url("https://api.nobitex.ir/market/orders/add")
+            .url("https://apiv2.nobitex.ir/market/orders/add")
             .header("Authorization", "Token ${nobitexToken.trim()}")
             .header("Content-Type", "application/json")
             .post(payload)

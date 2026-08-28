@@ -242,7 +242,7 @@ func (g *approvalGate) serve() *http.Server {
 func nobitexReadOnlyHandler(w http.ResponseWriter, r *http.Request) {
 	baseURL := strings.TrimRight(os.Getenv("NOBITEX_BASE_URL"), "/")
 	if baseURL == "" {
-		baseURL = "https://api.nobitex.ir"
+		baseURL = "https://apiv2.nobitex.ir"
 	}
 	token := strings.TrimSpace(os.Getenv("NOBITEX_API_TOKEN"))
 	if token == "" {

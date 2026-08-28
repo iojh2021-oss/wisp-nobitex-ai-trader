@@ -23,7 +23,7 @@ import kotlin.math.min
  */
 class NobitexMarketDataRepository(
     private val client: OkHttpClient,
-    private val baseUrl: String = "https://api.nobitex.ir"
+    private val baseUrl: String = "https://apiv2.nobitex.ir"
 ) {
     data class Level(val price: Double, val amount: Double)
 

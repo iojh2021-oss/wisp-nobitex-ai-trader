@@ -56,7 +56,7 @@ func envDuration(name string, fallback time.Duration) time.Duration {
 
 func (s *AITraderStrategy) run(ctx context.Context) {
 	baseURL := strings.TrimRight(os.Getenv("NOBITEX_BASE_URL"), "/")
-	if baseURL == "" { baseURL = "https://api.nobitex.ir" }
+	if baseURL == "" { baseURL = "https://apiv2.nobitex.ir" }
 	market := strings.ToUpper(os.Getenv("NOBITEX_MARKET"))
 	if market == "" { market = "BTCIRT" }
 	model := os.Getenv("OPENAI_MODEL")

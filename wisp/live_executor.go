@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-const nobitexOrderURL = "https://api.nobitex.ir/market/orders/add"
+const nobitexOrderURL = "https://apiv2.nobitex.ir/market/orders/add"
 
 // LiveExecution places a REAL order using real money. Gated by:
 // 1) LIVE_TRADING_ENABLED=true env var, 2) a confirmation phrase typed
