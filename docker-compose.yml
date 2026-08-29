@@ -1,0 +1,9 @@
+services:
+  wisp:
+    build: .
+    image: wisp-nobitex-ai-trader:latest
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "10000:10000"
