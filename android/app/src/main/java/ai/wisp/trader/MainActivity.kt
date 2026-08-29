@@ -92,6 +92,9 @@ import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 private const val CHATGPT_URL = "https://chatgpt.com/c/6a882026-cca0-83eb-9884-590944f19289"
+private const val AUTOPILOT_MAX_POSITIONS = 5
+private const val AUTOPILOT_POSITION_SIZE = 500000.0
+private const val AUTOPILOT_TICK_MS = 60_000L
 
 private val WispBackground = Color(0xFF090A0D)
 private val WispSurface = Color(0xFF111318)
@@ -201,6 +204,10 @@ private fun TraderDashboard(modifier: Modifier = Modifier) {
     var coinStatsApiKey by remember { mutableStateOf(secrets.readCoinStatsKey()) }
     var opportunities by remember { mutableStateOf(emptyList<LocalTradingEngine.Opportunity>()) }
     var scanningOpportunities by remember { mutableStateOf(false) }
+    val autopilotEngine = remember { AutopilotEngine(client) }
+    var autopilotEnabled by remember { mutableStateOf(false) }
+    var autopilotPositions by remember { mutableStateOf(emptyList<AutopilotPosition>()) }
+    var autopilotStatus by remember { mutableStateOf("Autopilot idle") }
     var snapshot by remember { mutableStateOf<LocalTradingEngine.MarketSnapshot?>(null) }
     var proposal by remember { mutableStateOf<LocalTradingEngine.Proposal?>(null) }
     var executions by remember { mutableStateOf(emptyList<LocalTradingEngine.PaperExecution>()) }
@@ -298,6 +305,27 @@ private fun TraderDashboard(modifier: Modifier = Modifier) {
         }
     }
 
+    androidx.compose.runtime.LaunchedEffect(autopilotEnabled) {
+        while (autopilotEnabled) {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    val checked = autopilotEngine.checkPositions(autopilotPositions)
+                    val opened = autopilotEngine.tryOpenPosition(
+                        openAiKey, coinStatsApiKey, checked, AUTOPILOT_MAX_POSITIONS, AUTOPILOT_POSITION_SIZE
+                    )
+                    if (opened != null) checked + opened else checked
+                }
+            }.onSuccess {
+                autopilotPositions = it
+                val openCount = it.count { p -> p.status == "open" }
+                autopilotStatus = "Autopilot running • $openCount/$AUTOPILOT_MAX_POSITIONS open"
+            }.onFailure {
+                autopilotStatus = "Autopilot error • ${it.message ?: "unknown"}"
+            }
+            delay(AUTOPILOT_TICK_MS)
+        }
+    }
+
     LazyColumn(modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { Spacer(Modifier.height(4.dp)) }
         item {
@@ -363,6 +391,31 @@ private fun TraderDashboard(modifier: Modifier = Modifier) {
                         OutlinedButton(onClick = { market = opp.market; status = "Selected ${opp.market} from scan — refresh to load it" }, modifier = Modifier.fillMaxWidth()) {
                             Text("USE THIS MARKET")
                         }
+                    }
+                }
+            }
+        }
+        item {
+            SectionCard("AUTOPILOT (PAPER ONLY)") {
+                Text("Runs fully on its own: checks open positions every minute for take-profit/stop-loss, and opens a new simulated position from the scanner when a slot is free. Never touches real money.", color = WispMuted, fontSize = 12.sp)
+                Button(
+                    onClick = { autopilotEnabled = !autopilotEnabled },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = if (autopilotEnabled) WispGreen else WispSurface2, contentColor = if (autopilotEnabled) Color.Black else WispText)
+                ) { Text(if (autopilotEnabled) "AUTOPILOT: ON — TAP TO STOP" else "START AUTOPILOT") }
+                Text(autopilotStatus, color = WispMuted, fontSize = 12.sp)
+                autopilotPositions.asReversed().take(10).forEach { pos ->
+                    Column(Modifier.fillMaxWidth().padding(top = 6.dp)) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(pos.market, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            Text(pos.status.uppercase(Locale.US), color = when (pos.status) {
+                                "closed_profit" -> WispGreen
+                                "closed_loss" -> WispRed
+                                else -> WispMuted
+                            }, fontSize = 11.sp)
+                        }
+                        Text("Entry ${"%.4f".format(Locale.US, pos.entryPrice)} • TP ${"%.4f".format(Locale.US, pos.takeProfit)} • SL ${"%.4f".format(Locale.US, pos.stopLoss)}", color = WispMuted, fontSize = 11.sp)
+                        if (pos.reason.isNotBlank()) Text(pos.reason, color = WispMuted, fontSize = 10.sp)
                     }
                 }
             }
