@@ -7,6 +7,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/wisp-trading/sdk/pkg/types/runtime"
@@ -51,12 +53,23 @@ func main() {
 	}()
 	defer func() { _ = approvalServer.Shutdown(context.Background()) }()
 
-	if err := rt.StartStandalone(strat, *configDir, *wispYml); err != nil {
-		log.Fatalf("StartStandalone: %v", err)
+	// NOTE: rt.StartStandalone() belongs to the generic wisp-trading/sdk
+	// exchange-connector bootstrap (Hyperliquid-style exchanges registered
+	// in ~/.wisp/connectors.yml). Our Nobitex integration is fully custom
+	// and self-contained inside AITraderStrategy.run() — it never uses that
+	// connector registry — so we start the strategy directly instead of
+	// going through the generic exchange-config validation, which would
+	// otherwise hard-fail with "exchanges is empty".
+	_ = configDir
+	_ = wispYml
+	_ = rt
+	if err := strat.Start(ctx); err != nil {
+		log.Fatalf("strategy start: %v", err)
 	}
-	log.Println("AI trader strategy started; waiting for shutdown")
-	if err := rt.Wait(); err != nil {
-		log.Printf("wait: %v", err)
-		os.Exit(1)
-	}
+	log.Println("AI trader strategy started (direct run, bypassing generic exchange bootstrap); waiting for shutdown")
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	<-sigCh
+	log.Println("shutdown signal received")
 }
