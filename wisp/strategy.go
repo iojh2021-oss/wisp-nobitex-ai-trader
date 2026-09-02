@@ -15,16 +15,19 @@ import (
 // AITraderStrategy is the Wisp lifecycle boundary. Wisp owns the long-running
 // loop while deterministic risk controls remain authoritative over the AI.
 //
-// Decisions that pass risk checks become explicit human-approval proposals.
-// This runtime remains paper-only and never submits a financial order.
+// The AI provider and paper/live mode are resolved fresh on every cycle from
+// the settings store (dashboard-editable, persisted in Postgres when
+// configured), so changes made from the UI take effect on the next cycle
+// without a redeploy. Environment variables remain the fallback.
 type AITraderStrategy struct {
 	strategy.BaseStrategy
-	k    wisp.Wisp
-	gate *approvalGate
+	k        wisp.Wisp
+	gate     *approvalGate
+	settings *settingsStore
 }
 
-func NewAITraderStrategy(k wisp.Wisp, gate *approvalGate) strategy.Strategy {
-	s := &AITraderStrategy{k: k, gate: gate}
+func NewAITraderStrategy(k wisp.Wisp, gate *approvalGate, settings *settingsStore) strategy.Strategy {
+	s := &AITraderStrategy{k: k, gate: gate, settings: settings}
 	s.BaseStrategy = *strategy.NewBaseStrategy(strategy.BaseStrategyConfig{Name: "nobitex-ai-trader"})
 	return s
 }
@@ -66,6 +69,49 @@ type aiDecider interface {
 	decide(ctx context.Context, market, portfolio map[string]any) (tradeDecision, error)
 }
 
+// resolveConfig reads the current AI provider + paper/live mode, preferring
+// the settings store (dashboard) and falling back to environment variables.
+func (s *AITraderStrategy) resolveConfig() (aiDecider, bool) {
+	provider := strings.ToLower(os.Getenv("AI_PROVIDER"))
+	openaiKey := os.Getenv("OPENAI_API_KEY")
+	openaiModel := os.Getenv("OPENAI_MODEL")
+	if openaiModel == "" {
+		openaiModel = "gpt-5-mini"
+	}
+	groqKey := os.Getenv("GROQ_API_KEY")
+	groqModel := os.Getenv("GROQ_MODEL")
+	if groqModel == "" {
+		groqModel = "openai/gpt-oss-120b"
+	}
+	paper := envBool("PAPER_TRADING", true)
+
+	if s.settings != nil {
+		st := s.settings.get()
+		provider = strings.ToLower(st.AIProvider)
+		if st.OpenAIAPIKey != "" {
+			openaiKey = st.OpenAIAPIKey
+		}
+		if st.OpenAIModel != "" {
+			openaiModel = st.OpenAIModel
+		}
+		if st.GroqAPIKey != "" {
+			groqKey = st.GroqAPIKey
+		}
+		if st.GroqModel != "" {
+			groqModel = st.GroqModel
+		}
+		paper = st.PaperTrading
+	}
+
+	var ai aiDecider
+	if provider == "groq" {
+		ai = newGroqClient(groqKey, groqModel)
+	} else {
+		ai = newOpenAIClient(openaiKey, openaiModel)
+	}
+	return ai, paper
+}
+
 func (s *AITraderStrategy) run(ctx context.Context) {
 	baseURL := strings.TrimRight(os.Getenv("NOBITEX_BASE_URL"), "/")
 	if baseURL == "" {
@@ -75,38 +121,16 @@ func (s *AITraderStrategy) run(ctx context.Context) {
 	if market == "" {
 		market = "BTCIRT"
 	}
-	model := os.Getenv("OPENAI_MODEL")
-	if model == "" {
-		model = "gpt-5-mini"
-	}
-	paper := envBool("PAPER_TRADING", true)
-	live := envBool("LIVE_TRADING_ENABLED", false)
-	// NOTE: the previous hard override that always forced paper=true
-	// regardless of config has been removed at explicit user request.
-	// Automatic LIVE execution is now possible when LIVE_TRADING_ENABLED=true
-	// and PAPER_TRADING=false. The deterministic risk gate (MAX_TRADE_QUOTE_LIVE /
-	// MAX_DAILY_LOSS_LIVE) remains the only automatic backstop.
-	s.k.Log().Info("execution mode: paper=%t live=%t", paper, live)
 
 	src, dst := splitMarket(market)
 	nobitex := newNobitexClient(baseURL, "")
-	var ai aiDecider
-	switch strings.ToLower(os.Getenv("AI_PROVIDER")) {
-	case "groq":
-		groqModel := os.Getenv("GROQ_MODEL")
-		if groqModel == "" {
-			groqModel = "llama-3.3-70b-versatile"
-		}
-		ai = newGroqClient(os.Getenv("GROQ_API_KEY"), groqModel)
-	default:
-		ai = newOpenAIClient(os.Getenv("OPENAI_API_KEY"), model)
-	}
 	risk := &riskGate{maxTradeQuote: envFloat("MAX_TRADE_QUOTE", 1000000), maxDailyLossQuote: envFloat("MAX_DAILY_LOSS_QUOTE", 2000000)}
 	interval := envDuration("TRADING_LOOP_INTERVAL", 30*time.Second)
 	minConfidence := envFloat("MIN_CONFIDENCE", 0.70)
 
-	s.k.Log().Info("nobitex-ai-trader: Wisp paper runtime started market=%s approval=enabled", market)
+	s.k.Log().Info("nobitex-ai-trader: Wisp runtime started market=%s approval=enabled", market)
 	for {
+		ai, paper := s.resolveConfig()
 		if err := s.tick(ctx, nobitex, ai, risk, src, dst, market, paper, minConfidence); err != nil {
 			s.k.Log().Failed("nobitex-ai-trader", market, "trading cycle failed", "error", err.Error())
 		}
