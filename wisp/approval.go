@@ -13,8 +13,8 @@ import (
 	"time"
 )
 
-// TradeProposal is an advisory decision waiting for explicit human approval.
-// Approval never bypasses deterministic risk validation.
+// TradeProposal is an advisory decision waiting for explicit human approval
+// (paper) or automatic execution (live, when enabled from the dashboard).
 type TradeProposal struct {
 	ID          string    `json:"id"`
 	CreatedAt   time.Time `json:"created_at"`
@@ -34,18 +34,21 @@ type approvalGate struct {
 	executor   *paperExecutor
 	executions map[string]PaperExecution
 	live       *liveExecutor
+	settings   *settingsStore
 }
 
-func newApprovalGate(ttl time.Duration) *approvalGate {
+func newApprovalGate(ttl time.Duration, settings *settingsStore) *approvalGate {
 	if ttl <= 0 {
 		ttl = 2 * time.Minute
 	}
+	risk := &riskGate{maxTradeQuote: envFloat("MAX_TRADE_QUOTE_LIVE", 0), maxDailyLossQuote: envFloat("MAX_DAILY_LOSS_LIVE", 0)}
 	return &approvalGate{
 		pending:    make(map[string]TradeProposal),
 		ttl:        ttl,
 		executor:   newPaperExecutor(),
 		executions: make(map[string]PaperExecution),
-		live:       newLiveExecutorFromEnv(),
+		live:       newLiveExecutor(risk, settings),
+		settings:   settings,
 	}
 }
 
@@ -236,6 +239,13 @@ func (g *approvalGate) serve() *http.Server {
 		writeJSON(w, p)
 	}))
 	mux.HandleFunc("/nobitex/readonly", auth(nobitexReadOnlyHandler))
+	mux.HandleFunc("/settings", auth(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			settingsPostHandler(g.settings)(w, r)
+			return
+		}
+		settingsGetHandler(g.settings)(w, r)
+	}))
 	return &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 }
 
