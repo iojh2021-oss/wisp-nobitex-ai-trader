@@ -17,9 +17,9 @@ import (
 const nobitexOrderURL = "https://apiv2.nobitex.ir/market/orders/add"
 const nobitexOrderPath = "/market/orders/add"
 
-// LiveExecution places a REAL order using real money. Gated by:
-// 1) LIVE_TRADING_ENABLED=true env var, 2) a confirmation phrase typed
-// by the user, 3) the same riskGate used for paper trading.
+// LiveExecution places a REAL order using real money. Whether this path is
+// enabled is controlled by the dashboard's Live Trading toggle (persisted
+// in the settings store) rather than an environment variable.
 type LiveExecution struct {
 	ID          string    `json:"id"`
 	ProposalID  string    `json:"proposal_id"`
@@ -37,42 +37,16 @@ type liveExecutor struct {
 	executions map[string]LiveExecution
 	risk       *riskGate
 	httpClient *http.Client
-
-	// New (recommended) signed "API Key" auth.
-	apiKey     string
-	privateKey ed25519.PrivateKey
-
-	// Legacy plain-token auth, kept available on purpose.
-	apiToken string
-
-	enabled bool
+	settings   *settingsStore
 }
 
-func newLiveExecutor(risk *riskGate) *liveExecutor {
+func newLiveExecutor(risk *riskGate, settings *settingsStore) *liveExecutor {
 	return &liveExecutor{
 		executions: make(map[string]LiveExecution),
 		risk:       risk,
 		httpClient: &http.Client{Timeout: 10 * time.Second},
-		apiKey:     os.Getenv("NOBITEX_API_KEY"),
-		privateKey: mustDecodeEd25519Seed(os.Getenv("NOBITEX_API_PRIVATE_KEY")),
-		apiToken:   os.Getenv("NOBITEX_API_TOKEN"),
-		enabled:    os.Getenv("LIVE_TRADING_ENABLED") == "true",
+		settings:   settings,
 	}
-}
-
-// newLiveExecutorFromEnv builds a live executor with its own dedicated risk
-// gate, configured from MAX_TRADE_QUOTE_LIVE / MAX_DAILY_LOSS_LIVE.
-func newLiveExecutorFromEnv() *liveExecutor {
-	maxTrade := envFloat("MAX_TRADE_QUOTE_LIVE", 0)
-	maxDailyLoss := envFloat("MAX_DAILY_LOSS_LIVE", 0)
-	risk := &riskGate{maxTradeQuote: maxTrade, maxDailyLossQuote: maxDailyLoss}
-	return newLiveExecutor(risk)
-}
-
-// usesSignedAuth reports whether the new Ed25519-signed API Key credentials
-// are configured. If not, the executor falls back to the legacy plain token.
-func (e *liveExecutor) usesSignedAuth() bool {
-	return e.apiKey != "" && e.privateKey != nil
 }
 
 func mustDecodeEd25519Seed(raw string) ed25519.PrivateKey {
@@ -104,28 +78,29 @@ func decodeBase64URLAny(s string) ([]byte, error) {
 	return nil, fmt.Errorf("invalid base64")
 }
 
-// signNobitexRequest builds the new signed "API Key" auth headers:
-// payload = timestamp + METHOD + full_path + raw_body
-// signature = base64url(Ed25519.sign(private_key, payload))
-func (e *liveExecutor) signNobitexRequest(method, path string, body []byte) (key, signature, timestamp string) {
+func signNobitexRequest(privateKey ed25519.PrivateKey, apiKey, method, path string, body []byte) (key, signature, timestamp string) {
 	ts := strconv.FormatInt(time.Now().Unix(), 10)
 	payload := ts + method + path + string(body)
-	sig := ed25519.Sign(e.privateKey, []byte(payload))
-	return e.apiKey, base64.URLEncoding.EncodeToString(sig), ts
+	sig := ed25519.Sign(privateKey, []byte(payload))
+	return apiKey, base64.URLEncoding.EncodeToString(sig), ts
 }
 
 func (e *liveExecutor) execute(p TradeProposal, confirmPhrase string) (LiveExecution, error) {
-	if !e.enabled {
-		return LiveExecution{}, fmt.Errorf("live trading is disabled (set LIVE_TRADING_ENABLED=true)")
+	enabled := os.Getenv("LIVE_TRADING_ENABLED") == "true"
+	if e.settings != nil {
+		enabled = e.settings.get().LiveTradingEnabled
 	}
-	signedAuth := e.usesSignedAuth()
-	if !signedAuth && e.apiToken == "" {
+	if !enabled {
+		return LiveExecution{}, fmt.Errorf("live trading is disabled (enable it from the dashboard)")
+	}
+
+	apiKey := os.Getenv("NOBITEX_API_KEY")
+	privateKey := mustDecodeEd25519Seed(os.Getenv("NOBITEX_API_PRIVATE_KEY"))
+	apiToken := os.Getenv("NOBITEX_API_TOKEN")
+	signedAuth := apiKey != "" && privateKey != nil
+	if !signedAuth && apiToken == "" {
 		return LiveExecution{}, fmt.Errorf("no Nobitex credentials configured: set NOBITEX_API_KEY + NOBITEX_API_PRIVATE_KEY (recommended) or NOBITEX_API_TOKEN (legacy)")
 	}
-	// NOTE: the manual confirmation-phrase requirement has been removed at
-	// explicit user request, to allow fully automated execution. The
-	// deterministic risk gate below is the ONLY automatic safeguard on this
-	// path now — it is intentionally kept in place and was NOT removed.
 	_ = confirmPhrase
 	if err := e.risk.validate(p.Action, p.QuoteAmount); err != nil {
 		return LiveExecution{}, fmt.Errorf("risk gate rejected order: %w", err)
@@ -153,12 +128,12 @@ func (e *liveExecutor) execute(p TradeProposal, confirmPhrase string) (LiveExecu
 	authMode := "legacy_token"
 	if signedAuth {
 		authMode = "signed_api_key"
-		key, signature, ts := e.signNobitexRequest(http.MethodPost, nobitexOrderPath, reqBody)
+		key, signature, ts := signNobitexRequest(privateKey, apiKey, http.MethodPost, nobitexOrderPath, reqBody)
 		req.Header.Set("Nobitex-Key", key)
 		req.Header.Set("Nobitex-Signature", signature)
 		req.Header.Set("Nobitex-Timestamp", ts)
 	} else {
-		req.Header.Set("Authorization", "Token "+e.apiToken)
+		req.Header.Set("Authorization", "Token "+apiToken)
 	}
 
 	resp, err := e.httpClient.Do(req)
