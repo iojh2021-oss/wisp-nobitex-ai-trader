@@ -30,9 +30,9 @@ func main() {
 	app := fx.New(
 		wisp.Module,
 		fx.Provide(func() *paperExecutor { return newPaperExecutor() }),
-		fx.Provide(func() *approvalGate {
-			gate := newApprovalGate(envDuration("APPROVAL_TTL", 2*time.Minute))
-			return gate
+		fx.Provide(func() *settingsStore { return newSettingsStore() }),
+		fx.Provide(func(settings *settingsStore) *approvalGate {
+			return newApprovalGate(envDuration("APPROVAL_TTL", 2*time.Minute), settings)
 		}),
 		fx.Invoke(func(gate *approvalGate, executor *paperExecutor) { gate.executor = executor }),
 		fx.Provide(NewAITraderStrategy),
