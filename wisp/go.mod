@@ -5,6 +5,7 @@ go 1.26
 toolchain go1.26.5
 
 require (
+	github.com/lib/pq v1.12.3
 	github.com/wisp-trading/sdk v0.1.10
 	go.uber.org/fx v1.24.0
 )
