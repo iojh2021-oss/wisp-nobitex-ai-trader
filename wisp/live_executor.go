@@ -122,10 +122,11 @@ func (e *liveExecutor) execute(p TradeProposal, confirmPhrase string) (LiveExecu
 	if !signedAuth && e.apiToken == "" {
 		return LiveExecution{}, fmt.Errorf("no Nobitex credentials configured: set NOBITEX_API_KEY + NOBITEX_API_PRIVATE_KEY (recommended) or NOBITEX_API_TOKEN (legacy)")
 	}
-	expected := fmt.Sprintf("CONFIRM LIVE %s", p.Market)
-	if confirmPhrase != expected {
-		return LiveExecution{}, fmt.Errorf("confirmation phrase mismatch; expected %q", expected)
-	}
+	// NOTE: the manual confirmation-phrase requirement has been removed at
+	// explicit user request, to allow fully automated execution. The
+	// deterministic risk gate below is the ONLY automatic safeguard on this
+	// path now — it is intentionally kept in place and was NOT removed.
+	_ = confirmPhrase
 	if err := e.risk.validate(p.Action, p.QuoteAmount); err != nil {
 		return LiveExecution{}, fmt.Errorf("risk gate rejected order: %w", err)
 	}

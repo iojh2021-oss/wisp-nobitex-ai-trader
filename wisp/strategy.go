@@ -81,11 +81,12 @@ func (s *AITraderStrategy) run(ctx context.Context) {
 	}
 	paper := envBool("PAPER_TRADING", true)
 	live := envBool("LIVE_TRADING_ENABLED", false)
-	if !paper || live {
-		s.k.Log().Info("automatic financial execution is disabled; forcing paper mode")
-		paper = true
-		live = false
-	}
+	// NOTE: the previous hard override that always forced paper=true
+	// regardless of config has been removed at explicit user request.
+	// Automatic LIVE execution is now possible when LIVE_TRADING_ENABLED=true
+	// and PAPER_TRADING=false. The deterministic risk gate (MAX_TRADE_QUOTE_LIVE /
+	// MAX_DAILY_LOSS_LIVE) remains the only automatic backstop.
+	s.k.Log().Info("execution mode: paper=%t live=%t", paper, live)
 
 	src, dst := splitMarket(market)
 	nobitex := newNobitexClient(baseURL, "")
@@ -162,9 +163,21 @@ func (s *AITraderStrategy) tick(ctx context.Context, n *nobitexClient, ai aiDeci
 	if err != nil {
 		return fmt.Errorf("create approval proposal: %w", err)
 	}
-	s.k.Log().Info("TRADE PROPOSAL pending approval id=%s action=%s market=%s quote=%.2f confidence=%.3f expires=%s reason=%s", proposal.ID, proposal.Action, proposal.Market, proposal.QuoteAmount, proposal.Confidence, proposal.ExpiresAt.Format(time.RFC3339), proposal.Reason)
-	if !paper {
-		return fmt.Errorf("execution mode is not paper; refusing automatic order")
+	s.k.Log().Info("TRADE PROPOSAL created id=%s action=%s market=%s quote=%.2f confidence=%.3f reason=%s", proposal.ID, proposal.Action, proposal.Market, proposal.QuoteAmount, proposal.Confidence, proposal.Reason)
+
+	if paper {
+		approved, err := s.gate.approve(proposal.ID)
+		if err != nil {
+			return fmt.Errorf("auto-approve paper: %w", err)
+		}
+		s.k.Log().Info("paper order auto-executed id=%s status=%s", approved.ID, approved.Status)
+		return nil
 	}
+
+	approved, err := s.gate.approveLive(proposal.ID, "")
+	if err != nil {
+		return fmt.Errorf("auto-approve live: %w", err)
+	}
+	s.k.Log().Info("LIVE order auto-executed id=%s status=%s", approved.ID, approved.Status)
 	return nil
 }
