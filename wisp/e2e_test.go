@@ -8,7 +8,7 @@ import (
 )
 
 func TestApprovalToPaperExecutionE2E(t *testing.T) {
-	g := newApprovalGate(0)
+	g := newApprovalGate(0, newSettingsStore())
 	p, err := g.create("BTCUSDT", tradeDecision{
 		Action:      "buy",
 		QuoteAmount: 100,
@@ -76,7 +76,7 @@ func TestApprovalToPaperExecutionE2E(t *testing.T) {
 }
 
 func TestDashboardServesHTML(t *testing.T) {
-	g := newApprovalGate(0)
+	g := newApprovalGate(0, newSettingsStore())
 	ts := httptest.NewServer(g.serve().Handler)
 	defer ts.Close()
 

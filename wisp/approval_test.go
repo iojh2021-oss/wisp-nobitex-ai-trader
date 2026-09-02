@@ -6,7 +6,7 @@ import (
 )
 
 func TestApprovalGateLifecycle(t *testing.T) {
-	gate := newApprovalGate(time.Minute)
+	gate := newApprovalGate(time.Minute, newSettingsStore())
 	proposal, err := gate.create("BTCIRT", tradeDecision{Action: "buy", QuoteAmount: 100, Confidence: 0.9, Reason: "test"})
 	if err != nil { t.Fatal(err) }
 	if proposal.Status != "pending" { t.Fatalf("status=%q", proposal.Status) }
@@ -19,7 +19,7 @@ func TestApprovalGateLifecycle(t *testing.T) {
 }
 
 func TestApprovalGateExpires(t *testing.T) {
-	gate := newApprovalGate(time.Millisecond)
+	gate := newApprovalGate(time.Millisecond, newSettingsStore())
 	proposal, err := gate.create("BTCIRT", tradeDecision{Action: "sell", QuoteAmount: 100, Confidence: 0.9, Reason: "test"})
 	if err != nil { t.Fatal(err) }
 	time.Sleep(5 * time.Millisecond)
