@@ -14,28 +14,27 @@ import (
 
 // Settings holds the AI provider selection and trading mode, editable at
 // runtime from the dashboard UI and persisted in Postgres so it survives
-// restarts. When no database is configured, the store falls back to an
-// in-memory value (changes via the UI then only last until the next
-// restart).
+// restarts. Mode is one of:
+//   "paper"   - local simulation only, no order ever leaves this server
+//   "sandbox" - real order placed on the Binance Spot Test Network (fake funds)
+//   "live"    - real order placed on Nobitex with real money
 type Settings struct {
-	AIProvider         string `json:"ai_provider"`
-	OpenAIAPIKey       string `json:"openai_api_key,omitempty"`
-	OpenAIModel        string `json:"openai_model"`
-	GroqAPIKey         string `json:"groq_api_key,omitempty"`
-	GroqModel          string `json:"groq_model"`
-	PaperTrading       bool   `json:"paper_trading"`
-	LiveTradingEnabled bool   `json:"live_trading_enabled"`
+	AIProvider   string `json:"ai_provider"`
+	OpenAIAPIKey string `json:"openai_api_key,omitempty"`
+	OpenAIModel  string `json:"openai_model"`
+	GroqAPIKey   string `json:"groq_api_key,omitempty"`
+	GroqModel    string `json:"groq_model"`
+	Mode         string `json:"mode"`
 }
 
 type publicSettings struct {
-	AIProvider         string `json:"ai_provider"`
-	HasOpenAIKey       bool   `json:"has_openai_key"`
-	OpenAIModel        string `json:"openai_model"`
-	HasGroqKey         bool   `json:"has_groq_key"`
-	GroqModel          string `json:"groq_model"`
-	PaperTrading       bool   `json:"paper_trading"`
-	LiveTradingEnabled bool   `json:"live_trading_enabled"`
-	Persisted          bool   `json:"persisted"`
+	AIProvider   string `json:"ai_provider"`
+	HasOpenAIKey bool   `json:"has_openai_key"`
+	OpenAIModel  string `json:"openai_model"`
+	HasGroqKey   bool   `json:"has_groq_key"`
+	GroqModel    string `json:"groq_model"`
+	Mode         string `json:"mode"`
+	Persisted    bool   `json:"persisted"`
 }
 
 type settingsStore struct {
@@ -46,10 +45,19 @@ type settingsStore struct {
 
 func defaultSettings() Settings {
 	return Settings{
-		AIProvider:   "openai",
-		OpenAIModel:  "gpt-5-mini",
-		GroqModel:    "openai/gpt-oss-120b",
-		PaperTrading: true,
+		AIProvider:  "openai",
+		OpenAIModel: "gpt-5-mini",
+		GroqModel:   "openai/gpt-oss-120b",
+		Mode:        "paper",
+	}
+}
+
+func normalizeMode(m string) string {
+	switch m {
+	case "sandbox", "live":
+		return m
+	default:
+		return "paper"
 	}
 }
 
@@ -75,13 +83,14 @@ func newSettingsStore() *settingsStore {
 		openai_model TEXT NOT NULL DEFAULT 'gpt-5-mini',
 		groq_api_key TEXT NOT NULL DEFAULT '',
 		groq_model TEXT NOT NULL DEFAULT 'openai/gpt-oss-120b',
-		paper_trading BOOLEAN NOT NULL DEFAULT TRUE,
-		live_trading_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+		mode TEXT NOT NULL DEFAULT 'paper',
 		CONSTRAINT single_row CHECK (id = 1)
 	)`); err != nil {
 		fmt.Fprintf(os.Stderr, "settings: schema init failed, falling back to in-memory: %v\n", err)
 		return s
 	}
+	// Migrate older installs that still have the two-boolean schema.
+	_, _ = db.Exec(`ALTER TABLE bot_settings ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'paper'`)
 	if _, err := db.Exec(`INSERT INTO bot_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING`); err != nil {
 		fmt.Fprintf(os.Stderr, "settings: seed row failed: %v\n", err)
 	}
@@ -98,19 +107,16 @@ func (s *settingsStore) get() Settings {
 		return s.memo
 	}
 	var st Settings
-	row := s.db.QueryRow(`SELECT ai_provider, openai_api_key, openai_model, groq_api_key, groq_model, paper_trading, live_trading_enabled FROM bot_settings WHERE id=1`)
-	if err := row.Scan(&st.AIProvider, &st.OpenAIAPIKey, &st.OpenAIModel, &st.GroqAPIKey, &st.GroqModel, &st.PaperTrading, &st.LiveTradingEnabled); err != nil {
+	row := s.db.QueryRow(`SELECT ai_provider, openai_api_key, openai_model, groq_api_key, groq_model, mode FROM bot_settings WHERE id=1`)
+	if err := row.Scan(&st.AIProvider, &st.OpenAIAPIKey, &st.OpenAIModel, &st.GroqAPIKey, &st.GroqModel, &st.Mode); err != nil {
 		return defaultSettings()
 	}
+	st.Mode = normalizeMode(st.Mode)
 	return st
 }
 
 func (s *settingsStore) save(in Settings) error {
-	if in.LiveTradingEnabled {
-		in.PaperTrading = false
-	} else {
-		in.PaperTrading = true
-	}
+	in.Mode = normalizeMode(in.Mode)
 	if in.AIProvider != "groq" {
 		in.AIProvider = "openai"
 	}
@@ -145,8 +151,8 @@ func (s *settingsStore) save(in Settings) error {
 	if in.GroqModel == "" {
 		in.GroqModel = current.GroqModel
 	}
-	_, err := s.db.Exec(`UPDATE bot_settings SET ai_provider=$1, openai_api_key=$2, openai_model=$3, groq_api_key=$4, groq_model=$5, paper_trading=$6, live_trading_enabled=$7 WHERE id=1`,
-		in.AIProvider, in.OpenAIAPIKey, in.OpenAIModel, in.GroqAPIKey, in.GroqModel, in.PaperTrading, in.LiveTradingEnabled)
+	_, err := s.db.Exec(`UPDATE bot_settings SET ai_provider=$1, openai_api_key=$2, openai_model=$3, groq_api_key=$4, groq_model=$5, mode=$6 WHERE id=1`,
+		in.AIProvider, in.OpenAIAPIKey, in.OpenAIModel, in.GroqAPIKey, in.GroqModel, in.Mode)
 	return err
 }
 
@@ -154,14 +160,13 @@ func settingsGetHandler(store *settingsStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		st := store.get()
 		writeJSON(w, publicSettings{
-			AIProvider:         st.AIProvider,
-			HasOpenAIKey:       st.OpenAIAPIKey != "" || os.Getenv("OPENAI_API_KEY") != "",
-			OpenAIModel:        st.OpenAIModel,
-			HasGroqKey:         st.GroqAPIKey != "" || os.Getenv("GROQ_API_KEY") != "",
-			GroqModel:          st.GroqModel,
-			PaperTrading:       st.PaperTrading,
-			LiveTradingEnabled: st.LiveTradingEnabled,
-			Persisted:          store.persisted(),
+			AIProvider:   st.AIProvider,
+			HasOpenAIKey: st.OpenAIAPIKey != "" || os.Getenv("OPENAI_API_KEY") != "",
+			OpenAIModel:  st.OpenAIModel,
+			HasGroqKey:   st.GroqAPIKey != "" || os.Getenv("GROQ_API_KEY") != "",
+			GroqModel:    st.GroqModel,
+			Mode:         st.Mode,
+			Persisted:    store.persisted(),
 		})
 	}
 }
