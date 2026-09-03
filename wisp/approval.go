@@ -13,8 +13,8 @@ import (
 	"time"
 )
 
-// TradeProposal is an advisory decision waiting for explicit human approval
-// (paper) or automatic execution (live, when enabled from the dashboard).
+// TradeProposal is an advisory decision waiting for automatic execution in
+// whichever mode is currently selected (paper / sandbox / live).
 type TradeProposal struct {
 	ID          string    `json:"id"`
 	CreatedAt   time.Time `json:"created_at"`
@@ -28,13 +28,15 @@ type TradeProposal struct {
 }
 
 type approvalGate struct {
-	mu         sync.Mutex
-	pending    map[string]TradeProposal
-	ttl        time.Duration
-	executor   *paperExecutor
-	executions map[string]PaperExecution
-	live       *liveExecutor
-	settings   *settingsStore
+	mu                sync.Mutex
+	pending           map[string]TradeProposal
+	ttl               time.Duration
+	executor          *paperExecutor
+	executions        map[string]PaperExecution
+	live              *liveExecutor
+	sandbox           *sandboxExecutor
+	sandboxExecutions map[string]SandboxExecution
+	settings          *settingsStore
 }
 
 func newApprovalGate(ttl time.Duration, settings *settingsStore) *approvalGate {
@@ -43,12 +45,14 @@ func newApprovalGate(ttl time.Duration, settings *settingsStore) *approvalGate {
 	}
 	risk := &riskGate{maxTradeQuote: envFloat("MAX_TRADE_QUOTE_LIVE", 0), maxDailyLossQuote: envFloat("MAX_DAILY_LOSS_LIVE", 0)}
 	return &approvalGate{
-		pending:    make(map[string]TradeProposal),
-		ttl:        ttl,
-		executor:   newPaperExecutor(),
-		executions: make(map[string]PaperExecution),
-		live:       newLiveExecutor(risk, settings),
-		settings:   settings,
+		pending:           make(map[string]TradeProposal),
+		ttl:               ttl,
+		executor:          newPaperExecutor(),
+		executions:        make(map[string]PaperExecution),
+		live:              newLiveExecutor(risk, settings),
+		sandbox:           newSandboxExecutor(),
+		sandboxExecutions: make(map[string]SandboxExecution),
+		settings:          settings,
 	}
 }
 
@@ -107,6 +111,43 @@ func (g *approvalGate) approve(id string) (TradeProposal, error) {
 	p.Status = "approved"
 	g.pending[id] = p
 	g.executions[id] = x
+	return p, nil
+}
+
+func (g *approvalGate) approveSandbox(id string) (TradeProposal, error) {
+	g.mu.Lock()
+	p, ok := g.pending[id]
+	if !ok {
+		g.mu.Unlock()
+		return TradeProposal{}, fmt.Errorf("proposal not found")
+	}
+	if !time.Now().UTC().Before(p.ExpiresAt) {
+		p.Status = "expired"
+		g.pending[id] = p
+		g.mu.Unlock()
+		return p, fmt.Errorf("proposal expired")
+	}
+	if p.Status != "pending" {
+		g.mu.Unlock()
+		return p, fmt.Errorf("proposal status is %s", p.Status)
+	}
+	if g.sandbox == nil {
+		g.mu.Unlock()
+		return p, fmt.Errorf("sandbox executor is not configured")
+	}
+	g.mu.Unlock()
+
+	x, err := g.sandbox.execute(p)
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if err != nil {
+		p.Status = "execution_failed"
+		g.pending[id] = p
+		return p, fmt.Errorf("sandbox execution: %w", err)
+	}
+	p.Status = "approved_sandbox"
+	g.pending[id] = p
+	g.sandboxExecutions[id] = x
 	return p, nil
 }
 
@@ -187,6 +228,16 @@ func (g *approvalGate) listExecutions() []PaperExecution {
 	return out
 }
 
+func (g *approvalGate) listSandboxExecutions() []SandboxExecution {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	out := make([]SandboxExecution, 0, len(g.sandboxExecutions))
+	for _, x := range g.sandboxExecutions {
+		out = append(out, x)
+	}
+	return out
+}
+
 func (g *approvalGate) serve() *http.Server {
 	addr := strings.TrimSpace(os.Getenv("APPROVAL_BIND_ADDR"))
 	if addr == "" {
@@ -214,8 +265,17 @@ func (g *approvalGate) serve() *http.Server {
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	mux.HandleFunc("/proposals", auth(func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, g.list()) }))
 	mux.HandleFunc("/executions", auth(func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, g.listExecutions()) }))
+	mux.HandleFunc("/sandbox-executions", auth(func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, g.listSandboxExecutions()) }))
 	mux.HandleFunc("/approve", auth(func(w http.ResponseWriter, r *http.Request) {
 		p, err := g.approve(r.URL.Query().Get("id"))
+		if err != nil {
+			writeJSONStatus(w, http.StatusConflict, map[string]any{"error": err.Error(), "proposal": p})
+			return
+		}
+		writeJSON(w, p)
+	}))
+	mux.HandleFunc("/approve-sandbox", auth(func(w http.ResponseWriter, r *http.Request) {
+		p, err := g.approveSandbox(r.URL.Query().Get("id"))
 		if err != nil {
 			writeJSONStatus(w, http.StatusConflict, map[string]any{"error": err.Error(), "proposal": p})
 			return
