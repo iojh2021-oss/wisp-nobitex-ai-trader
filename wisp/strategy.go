@@ -15,10 +15,11 @@ import (
 // AITraderStrategy is the Wisp lifecycle boundary. Wisp owns the long-running
 // loop while deterministic risk controls remain authoritative over the AI.
 //
-// The AI provider and paper/live mode are resolved fresh on every cycle from
-// the settings store (dashboard-editable, persisted in Postgres when
-// configured), so changes made from the UI take effect on the next cycle
-// without a redeploy. Environment variables remain the fallback.
+// The AI provider and execution mode (paper / sandbox / live) are resolved
+// fresh on every cycle from the settings store (dashboard-editable,
+// persisted in Postgres when configured), so changes made from the UI take
+// effect on the next cycle without a redeploy. Environment variables remain
+// the fallback.
 type AITraderStrategy struct {
 	strategy.BaseStrategy
 	k        wisp.Wisp
@@ -69,9 +70,9 @@ type aiDecider interface {
 	decide(ctx context.Context, market, portfolio map[string]any) (tradeDecision, error)
 }
 
-// resolveConfig reads the current AI provider + paper/live mode, preferring
+// resolveConfig reads the current AI provider + execution mode, preferring
 // the settings store (dashboard) and falling back to environment variables.
-func (s *AITraderStrategy) resolveConfig() (aiDecider, bool) {
+func (s *AITraderStrategy) resolveConfig() (aiDecider, string) {
 	provider := strings.ToLower(os.Getenv("AI_PROVIDER"))
 	openaiKey := os.Getenv("OPENAI_API_KEY")
 	openaiModel := os.Getenv("OPENAI_MODEL")
@@ -83,7 +84,10 @@ func (s *AITraderStrategy) resolveConfig() (aiDecider, bool) {
 	if groqModel == "" {
 		groqModel = "openai/gpt-oss-120b"
 	}
-	paper := envBool("PAPER_TRADING", true)
+	mode := "paper"
+	if envBool("LIVE_TRADING_ENABLED", false) {
+		mode = "live"
+	}
 
 	if s.settings != nil {
 		st := s.settings.get()
@@ -100,7 +104,7 @@ func (s *AITraderStrategy) resolveConfig() (aiDecider, bool) {
 		if st.GroqModel != "" {
 			groqModel = st.GroqModel
 		}
-		paper = st.PaperTrading
+		mode = st.Mode
 	}
 
 	var ai aiDecider
@@ -109,7 +113,7 @@ func (s *AITraderStrategy) resolveConfig() (aiDecider, bool) {
 	} else {
 		ai = newOpenAIClient(openaiKey, openaiModel)
 	}
-	return ai, paper
+	return ai, mode
 }
 
 func (s *AITraderStrategy) run(ctx context.Context) {
@@ -130,8 +134,8 @@ func (s *AITraderStrategy) run(ctx context.Context) {
 
 	s.k.Log().Info("nobitex-ai-trader: Wisp runtime started market=%s approval=enabled", market)
 	for {
-		ai, paper := s.resolveConfig()
-		if err := s.tick(ctx, nobitex, ai, risk, src, dst, market, paper, minConfidence); err != nil {
+		ai, mode := s.resolveConfig()
+		if err := s.tick(ctx, nobitex, ai, risk, src, dst, market, mode, minConfidence); err != nil {
 			s.k.Log().Failed("nobitex-ai-trader", market, "trading cycle failed", "error", err.Error())
 		}
 		timer := time.NewTimer(interval)
@@ -155,7 +159,7 @@ func splitMarket(market string) (string, string) {
 	return m, "irt"
 }
 
-func (s *AITraderStrategy) tick(ctx context.Context, n *nobitexClient, ai aiDecider, risk *riskGate, src, dst, market string, paper bool, minConfidence float64) error {
+func (s *AITraderStrategy) tick(ctx context.Context, n *nobitexClient, ai aiDecider, risk *riskGate, src, dst, market, mode string, minConfidence float64) error {
 	stats, err := n.marketStats(ctx, src, dst)
 	if err != nil {
 		return fmt.Errorf("market stats: %w", err)
@@ -164,7 +168,7 @@ func (s *AITraderStrategy) tick(ctx context.Context, n *nobitexClient, ai aiDeci
 	if err != nil {
 		return fmt.Errorf("orderbook: %w", err)
 	}
-	portfolio := map[string]any{"mode": "paper", "note": "No live balances or orders are used by this runtime."}
+	portfolio := map[string]any{"mode": mode, "note": "Decision is based on real Nobitex market data regardless of execution mode."}
 	decision, err := ai.decide(ctx, map[string]any{"market": market, "stats": stats, "orderbook": book}, portfolio)
 	if err != nil {
 		return err
@@ -187,9 +191,24 @@ func (s *AITraderStrategy) tick(ctx context.Context, n *nobitexClient, ai aiDeci
 	if err != nil {
 		return fmt.Errorf("create approval proposal: %w", err)
 	}
-	s.k.Log().Info("TRADE PROPOSAL created id=%s action=%s market=%s quote=%.2f confidence=%.3f reason=%s", proposal.ID, proposal.Action, proposal.Market, proposal.QuoteAmount, proposal.Confidence, proposal.Reason)
+	s.k.Log().Info("TRADE PROPOSAL created id=%s action=%s market=%s quote=%.2f confidence=%.3f reason=%s mode=%s", proposal.ID, proposal.Action, proposal.Market, proposal.QuoteAmount, proposal.Confidence, proposal.Reason, mode)
 
-	if paper {
+	switch mode {
+	case "sandbox":
+		approved, err := s.gate.approveSandbox(proposal.ID)
+		if err != nil {
+			return fmt.Errorf("auto-approve sandbox: %w", err)
+		}
+		s.k.Log().Info("SANDBOX order auto-executed id=%s status=%s", approved.ID, approved.Status)
+		return nil
+	case "live":
+		approved, err := s.gate.approveLive(proposal.ID, "")
+		if err != nil {
+			return fmt.Errorf("auto-approve live: %w", err)
+		}
+		s.k.Log().Info("LIVE order auto-executed id=%s status=%s", approved.ID, approved.Status)
+		return nil
+	default:
 		approved, err := s.gate.approve(proposal.ID)
 		if err != nil {
 			return fmt.Errorf("auto-approve paper: %w", err)
@@ -197,11 +216,4 @@ func (s *AITraderStrategy) tick(ctx context.Context, n *nobitexClient, ai aiDeci
 		s.k.Log().Info("paper order auto-executed id=%s status=%s", approved.ID, approved.Status)
 		return nil
 	}
-
-	approved, err := s.gate.approveLive(proposal.ID, "")
-	if err != nil {
-		return fmt.Errorf("auto-approve live: %w", err)
-	}
-	s.k.Log().Info("LIVE order auto-executed id=%s status=%s", approved.ID, approved.Status)
-	return nil
 }
