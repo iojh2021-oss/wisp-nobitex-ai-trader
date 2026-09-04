@@ -31,22 +31,32 @@ type SandboxExecution struct {
 	Status      string    `json:"status"`
 	ExecutedAt  time.Time `json:"executed_at"`
 	BinanceRef  string    `json:"binance_ref"`
+	Executor    string    `json:"executor"`
 }
 
 type sandboxExecutor struct {
 	mu         sync.Mutex
 	executions map[string]SandboxExecution
 	httpClient *http.Client
+	settings   *settingsStore
 }
 
-func newSandboxExecutor() *sandboxExecutor {
+func newSandboxExecutor(settings *settingsStore) *sandboxExecutor {
 	return &sandboxExecutor{
 		executions: make(map[string]SandboxExecution),
-		httpClient: &http.Client{Timeout: 10 * time.Second},
+		httpClient: &http.Client{Timeout: 90 * time.Second},
+		settings: settings,
 	}
 }
 
 func (e *sandboxExecutor) execute(p TradeProposal) (SandboxExecution, error) {
+	if e.settings != nil && e.settings.get().RenderRelayEnabled {
+		return e.executeViaRender(p)
+	}
+	return e.executeDirect(p)
+}
+
+func (e *sandboxExecutor) executeDirect(p TradeProposal) (SandboxExecution, error) {
 	apiKey := os.Getenv("BINANCE_TESTNET_API_KEY")
 	apiSecret := os.Getenv("BINANCE_TESTNET_API_SECRET")
 	if apiKey == "" || apiSecret == "" {
@@ -64,6 +74,32 @@ func (e *sandboxExecutor) execute(p TradeProposal) (SandboxExecution, error) {
 		symbol = sm
 	}
 
+	orderID, orderStatus, err := placeBinanceTestnetOrder(e.httpClient, p, apiKey, apiSecret, symbol, side)
+	if err != nil {
+		return SandboxExecution{}, err
+	}
+
+	now := time.Now().UTC()
+	id, err := newProposalID()
+	if err != nil {
+		return SandboxExecution{}, err
+	}
+	x := SandboxExecution{
+		ID: id, ProposalID: p.ID, Market: symbol, Action: p.Action,
+		QuoteAmount: p.QuoteAmount, Status: orderStatus, ExecutedAt: now,
+		BinanceRef: fmt.Sprintf("BINANCE-TESTNET-%d", orderID),
+		Executor: "server",
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if _, exists := e.executions[p.ID]; exists {
+		return SandboxExecution{}, fmt.Errorf("proposal already executed")
+	}
+	e.executions[p.ID] = x
+	return x, nil
+}
+
+func placeBinanceTestnetOrder(httpClient *http.Client, p TradeProposal, apiKey, apiSecret, symbol, side string) (int64, string, error) {
 	params := url.Values{}
 	params.Set("symbol", symbol)
 	params.Set("side", side)
@@ -78,16 +114,16 @@ func (e *sandboxExecutor) execute(p TradeProposal) (SandboxExecution, error) {
 
 	req, err := http.NewRequest(http.MethodPost, binanceTestnetBase+"/api/v3/order?"+params.Encode(), nil)
 	if err != nil {
-		return SandboxExecution{}, err
+		return 0, "", err
 	}
 	req.Header.Set("X-MBX-APIKEY", apiKey)
 
-	resp, err := e.httpClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
-		return SandboxExecution{}, fmt.Errorf("binance testnet request failed: %w", err)
+		return 0, "", fmt.Errorf("binance testnet request failed: %w", err)
 	}
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(resp.Body)
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 
 	var result struct {
 		OrderID int64  `json:"orderId"`
@@ -95,29 +131,19 @@ func (e *sandboxExecutor) execute(p TradeProposal) (SandboxExecution, error) {
 		Msg     string `json:"msg"`
 	}
 	if err := json.Unmarshal(raw, &result); err != nil {
-		return SandboxExecution{}, fmt.Errorf("could not parse binance response: %w", err)
+		return 0, "", fmt.Errorf("could not parse binance response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return SandboxExecution{}, fmt.Errorf("binance testnet rejected order: %s", result.Msg)
+		return 0, "", fmt.Errorf("binance testnet rejected order: %s", result.Msg)
 	}
-
-	now := time.Now().UTC()
-	id, err := newProposalID()
-	if err != nil {
-		return SandboxExecution{}, err
+	if result.OrderID == 0 {
+		return 0, "", fmt.Errorf("binance testnet returned no order id")
 	}
-	x := SandboxExecution{
-		ID: id, ProposalID: p.ID, Market: symbol, Action: p.Action,
-		QuoteAmount: p.QuoteAmount, Status: "filled", ExecutedAt: now,
-		BinanceRef: fmt.Sprintf("BINANCE-TESTNET-%d", result.OrderID),
+	status := result.Status
+	if status == "" {
+		status = "accepted"
 	}
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if _, exists := e.executions[p.ID]; exists {
-		return SandboxExecution{}, fmt.Errorf("proposal already executed")
-	}
-	e.executions[p.ID] = x
-	return x, nil
+	return result.OrderID, status, nil
 }
 
 func (e *sandboxExecutor) list() []SandboxExecution {
