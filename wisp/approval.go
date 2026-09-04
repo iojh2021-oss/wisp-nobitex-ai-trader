@@ -40,7 +40,11 @@ type approvalGate struct {
 	sessions          *sessionStore
 }
 
-func newApprovalGate(ttl time.Duration, settings *settingsStore, sessions *sessionStore) *approvalGate {
+func newApprovalGate(ttl time.Duration, settings *settingsStore, sessionArgs ...*sessionStore) *approvalGate {
+	sessions := newSessionStore()
+	if len(sessionArgs) > 0 && sessionArgs[0] != nil {
+		sessions = sessionArgs[0]
+	}
 	if ttl <= 0 {
 		ttl = 2 * time.Minute
 	}
