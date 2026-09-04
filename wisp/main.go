@@ -63,6 +63,13 @@ func main() {
 	_ = configDir
 	_ = wispYml
 	_ = rt
+	if envBool("RENDER_EXECUTOR_ONLY", false) {
+		log.Println("Render Binance executor-only service started; strategy loop disabled")
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+		<-sigCh
+		return
+	}
 	if err := strat.Start(ctx); err != nil {
 		log.Fatalf("strategy start: %v", err)
 	}
