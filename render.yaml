@@ -30,3 +30,23 @@ services:
         value: "2000000"
       - key: TRADING_LOOP_INTERVAL
         value: 30s
+
+  - type: web
+    name: wisp-binance-testnet-relay
+    runtime: docker
+    plan: free
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: RENDER_EXECUTOR_ONLY
+        value: "true"
+      - key: RENDER_RELAY_TOKEN
+        sync: false
+      - key: BINANCE_TESTNET_API_KEY
+        sync: false
+      - key: BINANCE_TESTNET_API_SECRET
+        sync: false
+      - key: SANDBOX_MARKET
+        value: BTCUSDT
+      - key: LIVE_TRADING_ENABLED
+        value: "false"
