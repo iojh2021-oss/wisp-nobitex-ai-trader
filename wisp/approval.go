@@ -1,3 +1,5 @@
+cd ~/wisp-nobitex-ai-trader/wisp
+cat > approval.go << 'EOF'
 package main
 
 import (
@@ -37,9 +39,10 @@ type approvalGate struct {
 	sandbox           *sandboxExecutor
 	sandboxExecutions map[string]SandboxExecution
 	settings          *settingsStore
+	sessions          *sessionStore
 }
 
-func newApprovalGate(ttl time.Duration, settings *settingsStore) *approvalGate {
+func newApprovalGate(ttl time.Duration, settings *settingsStore, sessions *sessionStore) *approvalGate {
 	if ttl <= 0 {
 		ttl = 2 * time.Minute
 	}
@@ -53,6 +56,7 @@ func newApprovalGate(ttl time.Duration, settings *settingsStore) *approvalGate {
 		sandbox:           newSandboxExecutor(),
 		sandboxExecutions: make(map[string]SandboxExecution),
 		settings:          settings,
+		sessions:          sessions,
 	}
 }
 
@@ -247,21 +251,27 @@ func (g *approvalGate) serve() *http.Server {
 			addr = "127.0.0.1:8787"
 		}
 	}
-	token := strings.TrimSpace(os.Getenv("APPROVAL_TOKEN"))
+	legacyToken := strings.TrimSpace(os.Getenv("APPROVAL_TOKEN"))
 	mux := http.NewServeMux()
 	auth := func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
-			if token != "" && r.Header.Get("Authorization") != "Bearer "+token {
+			if !isAuthenticated(r, g.sessions, legacyToken) {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
 			next(w, r)
 		}
 	}
-	mux.HandleFunc("/", auth(func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if !isAuthenticated(r, g.sessions, legacyToken) {
+			_, _ = w.Write([]byte(loginHTML))
+			return
+		}
 		_, _ = w.Write([]byte(uiHTML))
-	}))
+	})
+	mux.HandleFunc("/login", loginHandler(g.sessions))
+	mux.HandleFunc("/logout", logoutHandler(g.sessions))
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	mux.HandleFunc("/proposals", auth(func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, g.list()) }))
 	mux.HandleFunc("/executions", auth(func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, g.listExecutions()) }))
@@ -353,3 +363,5 @@ func writeJSONStatus(w http.ResponseWriter, status int, value any) {
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)
 }
+EOF
+wc -l approval.go
