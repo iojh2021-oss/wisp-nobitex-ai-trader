@@ -86,9 +86,9 @@ func signNobitexRequest(privateKey ed25519.PrivateKey, apiKey, method, path stri
 }
 
 func (e *liveExecutor) execute(p TradeProposal, confirmPhrase string) (LiveExecution, error) {
-	enabled := os.Getenv("LIVE_TRADING_ENABLED") == "true"
+	enabled := envBool("LIVE_TRADING_ENABLED", false)
 	if e.settings != nil {
-		enabled = e.settings.get().LiveTradingEnabled
+		enabled = e.settings.get().Mode == "live"
 	}
 	if !enabled {
 		return LiveExecution{}, fmt.Errorf("live trading is disabled (enable it from the dashboard)")
