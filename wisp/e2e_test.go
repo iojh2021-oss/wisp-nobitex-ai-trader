@@ -8,6 +8,7 @@ import (
 )
 
 func TestApprovalToPaperExecutionE2E(t *testing.T) {
+	t.Setenv("APPROVAL_TOKEN", "test-token")
 	g := newApprovalGate(0, newSettingsStore())
 	p, err := g.create("BTCUSDT", tradeDecision{
 		Action:      "buy",
@@ -23,7 +24,9 @@ func TestApprovalToPaperExecutionE2E(t *testing.T) {
 	ts := httptest.NewServer(srv.Handler)
 	defer ts.Close()
 
-	resp, err := http.Get(ts.URL + "/proposals")
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/proposals", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("GET /proposals: %v", err)
 	}
@@ -39,7 +42,9 @@ func TestApprovalToPaperExecutionE2E(t *testing.T) {
 		t.Fatalf("unexpected proposal state: %+v", proposals)
 	}
 
-	resp2, err := http.Get(ts.URL + "/approve?id=" + p.ID)
+	req2, err := http.NewRequest(http.MethodGet, ts.URL+"/approve?id="+p.ID, nil)
+	req2.Header.Set("Authorization", "Bearer test-token")
+	resp2, err := http.DefaultClient.Do(req2)
 	if err != nil {
 		t.Fatalf("GET /approve: %v", err)
 	}
@@ -55,7 +60,9 @@ func TestApprovalToPaperExecutionE2E(t *testing.T) {
 		t.Fatalf("proposal status = %q, want approved", approved.Status)
 	}
 
-	resp3, err := http.Get(ts.URL + "/executions")
+	req3, err := http.NewRequest(http.MethodGet, ts.URL+"/executions", nil)
+	req3.Header.Set("Authorization", "Bearer test-token")
+	resp3, err := http.DefaultClient.Do(req3)
 	if err != nil {
 		t.Fatalf("GET /executions: %v", err)
 	}
