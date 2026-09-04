@@ -24,7 +24,8 @@ type Settings struct {
 	OpenAIModel  string `json:"openai_model"`
 	GroqAPIKey   string `json:"groq_api_key,omitempty"`
 	GroqModel    string `json:"groq_model"`
-	Mode         string `json:"mode"`
+	Mode              string `json:"mode"`
+	RenderRelayEnabled bool   `json:"render_relay_enabled"`
 }
 
 type publicSettings struct {
@@ -33,8 +34,10 @@ type publicSettings struct {
 	OpenAIModel  string `json:"openai_model"`
 	HasGroqKey   bool   `json:"has_groq_key"`
 	GroqModel    string `json:"groq_model"`
-	Mode         string `json:"mode"`
-	Persisted    bool   `json:"persisted"`
+	Mode                  string `json:"mode"`
+	RenderRelayEnabled    bool   `json:"render_relay_enabled"`
+	RenderRelayConfigured bool   `json:"render_relay_configured"`
+	Persisted             bool   `json:"persisted"`
 }
 
 type settingsStore struct {
@@ -84,6 +87,7 @@ func newSettingsStore() *settingsStore {
 		groq_api_key TEXT NOT NULL DEFAULT '',
 		groq_model TEXT NOT NULL DEFAULT 'openai/gpt-oss-120b',
 		mode TEXT NOT NULL DEFAULT 'paper',
+		render_relay_enabled BOOLEAN NOT NULL DEFAULT FALSE,
 		CONSTRAINT single_row CHECK (id = 1)
 	)`); err != nil {
 		fmt.Fprintf(os.Stderr, "settings: schema init failed, falling back to in-memory: %v\n", err)
@@ -91,6 +95,7 @@ func newSettingsStore() *settingsStore {
 	}
 	// Migrate older installs that still have the two-boolean schema.
 	_, _ = db.Exec(`ALTER TABLE bot_settings ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'paper'`)
+	_, _ = db.Exec(`ALTER TABLE bot_settings ADD COLUMN IF NOT EXISTS render_relay_enabled BOOLEAN NOT NULL DEFAULT FALSE`)
 	if _, err := db.Exec(`INSERT INTO bot_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING`); err != nil {
 		fmt.Fprintf(os.Stderr, "settings: seed row failed: %v\n", err)
 	}
@@ -107,8 +112,8 @@ func (s *settingsStore) get() Settings {
 		return s.memo
 	}
 	var st Settings
-	row := s.db.QueryRow(`SELECT ai_provider, openai_api_key, openai_model, groq_api_key, groq_model, mode FROM bot_settings WHERE id=1`)
-	if err := row.Scan(&st.AIProvider, &st.OpenAIAPIKey, &st.OpenAIModel, &st.GroqAPIKey, &st.GroqModel, &st.Mode); err != nil {
+	row := s.db.QueryRow(`SELECT ai_provider, openai_api_key, openai_model, groq_api_key, groq_model, mode, render_relay_enabled FROM bot_settings WHERE id=1`)
+	if err := row.Scan(&st.AIProvider, &st.OpenAIAPIKey, &st.OpenAIModel, &st.GroqAPIKey, &st.GroqModel, &st.Mode, &st.RenderRelayEnabled); err != nil {
 		return defaultSettings()
 	}
 	st.Mode = normalizeMode(st.Mode)
@@ -151,8 +156,8 @@ func (s *settingsStore) save(in Settings) error {
 	if in.GroqModel == "" {
 		in.GroqModel = current.GroqModel
 	}
-	_, err := s.db.Exec(`UPDATE bot_settings SET ai_provider=$1, openai_api_key=$2, openai_model=$3, groq_api_key=$4, groq_model=$5, mode=$6 WHERE id=1`,
-		in.AIProvider, in.OpenAIAPIKey, in.OpenAIModel, in.GroqAPIKey, in.GroqModel, in.Mode)
+	_, err := s.db.Exec(`UPDATE bot_settings SET ai_provider=$1, openai_api_key=$2, openai_model=$3, groq_api_key=$4, groq_model=$5, mode=$6, render_relay_enabled=$7 WHERE id=1`,
+		in.AIProvider, in.OpenAIAPIKey, in.OpenAIModel, in.GroqAPIKey, in.GroqModel, in.Mode, in.RenderRelayEnabled)
 	return err
 }
 
