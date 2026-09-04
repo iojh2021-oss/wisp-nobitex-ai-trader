@@ -1,5 +1,3 @@
-cd ~/wisp-nobitex-ai-trader/wisp
-cat > approval.go << 'EOF'
 package main
 
 import (
@@ -363,5 +361,3 @@ func writeJSONStatus(w http.ResponseWriter, status int, value any) {
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)
 }
-EOF
-wc -l approval.go
