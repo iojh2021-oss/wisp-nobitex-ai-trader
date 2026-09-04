@@ -51,7 +51,7 @@ func newApprovalGate(ttl time.Duration, settings *settingsStore, sessions *sessi
 		executor:          newPaperExecutor(),
 		executions:        make(map[string]PaperExecution),
 		live:              newLiveExecutor(risk, settings),
-		sandbox:           newSandboxExecutor(),
+		sandbox:           newSandboxExecutor(settings),
 		sandboxExecutions: make(map[string]SandboxExecution),
 		settings:          settings,
 		sessions:          sessions,
@@ -274,6 +274,7 @@ func (g *approvalGate) serve() *http.Server {
 	mux.HandleFunc("/proposals", auth(func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, g.list()) }))
 	mux.HandleFunc("/executions", auth(func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, g.listExecutions()) }))
 	mux.HandleFunc("/sandbox-executions", auth(func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, g.listSandboxExecutions()) }))
+	mux.HandleFunc("/relay/binance/order", renderRelayOrderHandler)
 	mux.HandleFunc("/approve", auth(func(w http.ResponseWriter, r *http.Request) {
 		p, err := g.approve(r.URL.Query().Get("id"))
 		if err != nil {
